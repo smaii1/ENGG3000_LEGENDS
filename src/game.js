@@ -184,11 +184,19 @@ function activateRandomMole(scene) {
     }
   });
 
-  scene.tweens.add({//animate mole popping up
+   scene.tweens.add({//animate mole popping up
     targets: selectedMole,
     y: hole.y + Mole_Active_Y, //move mole up
     duration: 300,
-    ease: "Back.easeOut"
+    ease: "Back.easeOut",
+    onComplete: () => {
+      //mole will stay up for 3 seconds (same as timer) before going down
+      scene.time.delayedCall(gameState.moleTime, () => {
+        if(gameState.activeMole === selectedMole) {
+          deactivateMole(scene, selectedMole);
+        }
+      });
+    }
   });
 }
 

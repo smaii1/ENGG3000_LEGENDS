@@ -15,13 +15,13 @@ const gameState = {
     moleTime: 3000, //3 seconds for each mole
     canWhack: true,
     //missedMoles: 0,
-    //maxMissedMoles: 3
+    //maxMissedMoles: 3 //implement for game over
 };
 
 const Mole_Active_Y = -100;
 
 function preload () {
-	//images n shi
+	//images (vfx, sprites, etc)
   this.load.image('hammer', 'assets/hammer.png');
 }
 
@@ -150,7 +150,7 @@ function activateRandomMole(scene) {
     ease: "Back.easeOut",
     onComplete: () => {
       //mole will stay up for 3 seconds (same as timer) before going down
-      scene.time.delayedCall(3000, () => {
+      scene.time.delayedCall(gameState.moleTime, () => {
         if(gameState.activeMole === selectedMole) {
           deactivateMole(scene, selectedMole);
         }
@@ -215,7 +215,7 @@ function whackMole(scene) {
 }
 
 const config = {
-  type: Phaser.AUTO, //detects if the browser supports webGL or canvas and uses the best option
+  type: Phaser.AUTO, //detects if the browser supports webGL or canvas and uses the best option; may need to update 
   width: 1200,
   height: 800,
   backgroundColor: "#93da60",
