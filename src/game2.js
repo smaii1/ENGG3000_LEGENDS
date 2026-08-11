@@ -149,8 +149,8 @@ function activateRandomMole(scene) {
     duration: 300,
     ease: "Back.easeOut",
     onComplete: () => {
-      //mole will stay up for 1.5 seconds before going down
-      scene.time.delayedCall(1500, () => {
+      //mole will stay up for 3 seconds (same as timer) before going down
+      scene.time.delayedCall(3000, () => {
         if(gameState.activeMole === selectedMole) {
           deactivateMole(scene, selectedMole);
         }
