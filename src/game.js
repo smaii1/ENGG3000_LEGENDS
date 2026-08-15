@@ -83,6 +83,16 @@ function update () {
   gameState.hammer.y = this.input.activePointer.y;
 }
 
+function gameOver(scene) {
+  //display game over text and final score
+  const gameOverText = scene.add.text(
+    CenterX,
+    CenterY,
+    `GAME OVER\nFinal Score: ${gameState.score}`,
+    { font: "48px sans-serif", fill: '#000', align: 'center' }
+  ).setOrigin(0.5);
+}
+
 function createTimerBar(scene) {
   const background = scene.add.rectangle(0,0,100,12,0xf4f0f0);
   const bar = scene.add.rectangle(0,0,96, 8,0x55cc55);
@@ -199,6 +209,7 @@ function activateRandomMole(scene) {
     }
   });
 }
+
 
 
 function deactivateMole(scene, mole) {

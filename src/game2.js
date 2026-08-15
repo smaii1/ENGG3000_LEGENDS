@@ -12,17 +12,20 @@ const gameState = {
     moleTimeout: null,
 
     timer: 0,
-    moleTime: 3000, //3 seconds for each mole
+    moleTime: 5000, //5 seconds for each mole
     canWhack: true,
-    //missedMoles: 0,
-    //maxMissedMoles: 3 //implement for game over
+    missedMoles: 0,
+    maxMissedMoles: 3, //3 moles missed = game over
+
+    gameOver: false
 };
 
 const Mole_Active_Y = -100;
 
 function preload () {
 	//images (vfx, sprites, etc)
-  this.load.image('hammer', 'assets/hammer.png');
+  this.load.image('hammer', 'assets/hammer1.png');
+  this.load.image('mole', 'assets/mole.png'); // normal mole image (just popped up)
 }
 
 function create () {
@@ -35,7 +38,6 @@ function create () {
 
   CenterX = config.width / 2; // 600
   CenterY = config.height / 2; // 400
-
   gameState.scoreText = this.add.text(CenterX-50, 750, 'Score: 0', { fontSize: '30px', fill: '#000' })
   
   //holes setup
@@ -69,6 +71,33 @@ function update () {
   gameState.hammer.y = this.input.activePointer.y;
 }
 
+function showGameOver(scene){
+  if(gameState.gameOver){
+    return; //gameover can only be called once
+  }
+  gameState.gameOver = true;
+  gameState.canWhack = false;
+
+  if(gameState.timerTween){ //stop timers
+    gameState.timerTween.stop();
+    gameState.timerTween = null;
+  }
+  if(gameState.timerBar){
+    gameState.timerBar.container.setVisible(false);
+  }
+
+  //basic GAME OVER text for now - will design better later
+  const overlay = scene.add.rectangle(600, 400, 1200, 800, 0x000, 0.65);
+  overlay.setDepth(20);
+  const gameOverText = scene.add.text(600,300,'GAME OVER!', {font:'bold 72px sans-serif', fill: '#fff'});
+  gameOverText.setOrigin(0.5);
+  gameOverText.setDepth(21); // appear over everything
+  const finalScoreText = scene.add.text(600, 400, `Score: ${gameState.score}`,{font: '36px sans-serif',fill: '#fff'});
+  finalScoreText.setOrigin(0.5);
+  finalScoreText.setDepth(21);
+  game
+}
+
 function createTimerBar(scene) {
   const background = scene.add.rectangle(0,0,100,12,0xf4f0f0);
   const bar = scene.add.rectangle(0,0,96, 8,0x55cc55);
@@ -88,20 +117,16 @@ function createHammer(scene) {
   return hammer;
 }
 
-//MOLLLLLLEEEEEEEEEE
+//Mole creation
 function createMoles(scene) {
   gameState.holes.forEach(hole => {
     //create mole for each hole
-    const mole = scene.add.container(hole.x, hole.y);
-    //mole body
-    const moleBody = scene.add.rectangle(0, 0, 100, 120, 0x964B00);
-    //const moleHead = scene.add.ellipse(0, -24, 65, 70, 0x964B00);
-    const moleEyeLeft = scene.add.ellipse(-25, -15, 20, 20, 0x00);
-    const moleEyeRight = scene.add.ellipse(25, -15, 20, 20, 0x000);
-    const moleNose = scene.add.ellipse(0, 15, 25, 20, 0xecb8b8);
-    mole.add([moleBody, moleEyeLeft, moleEyeRight, moleNose]);
-  
-  mole.setDepth(4); //ensure mole is above holes but below hammer
+    const mole = scene.add.image(hole.x, hole.y+80, 'mole');
+    mole.setScale(4);
+    mole.setPipeline('TextureTintPipeline');
+    mole.texture.setFilter(Phaser.Textures.FilterMode.NEAREST);
+  mole.setVisible(false); //hidden until it has been selected via activateRandomMole
+  mole.setDepth(6); //ensure mole is above holes but below hammer
   //mole starts lower down and will pop up when activated
   gameState.moles.push(mole); //store reference to the mole
   });
@@ -119,6 +144,9 @@ function activateRandomMole(scene) {
   //animate mole popping up
   const hole = gameState.holes[randomMoleIndex];
   gameState.activeMole = selectedMole;
+  selectedMole.x = hole.x;
+  selectedMole.y = hole.y+80;
+  selectedMole.setVisible(true); 
   //timerrrrrrr reste
   if(gameState.timerTween) {
     gameState.timerTween.stop(); //stop any existing timer tween
@@ -138,9 +166,13 @@ function activateRandomMole(scene) {
       gameState.timerTween = null; //reset timer tween reference
       //only decativeate mole if it is still the active mole (it might have been whacked)
       if (gameState.activeMole === selectedMole) {
+        gameState.missedMoles++; 
         deactivateMole(scene, selectedMole);
-      }
+       if(gameState.missedMoles >= gameState.maxMissedMoles){
+        showGameOver(scene);
+       }
     }
+   }
   });
 
   scene.tweens.add({//animate mole popping up
@@ -182,9 +214,12 @@ function deactivateMole(scene, mole) {
     duration: 300,
     ease: "Back.easeIn",
     onComplete: () => {
+      mole.setVisible(false); //mole doesnt appear over hole after going down
       if (gameState.activeMole === mole) {
         gameState.activeMole = null; //reset active mole reference
-        scene.time.delayedCall(1000, () => activateRandomMole(scene)); //activate a new mole after 1 second
+      }
+      if(gameState.missedMoles < gameState.maxMissedMoles){
+        scene.time.delayedCall(1000, ()=> activateRandomMole(scene)); //IF game is NOT over, activate manother mole after 1 sec
       }
     }
   });
