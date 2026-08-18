@@ -4,7 +4,7 @@
 // Level Definitions & Configurations
 // ----------------------------------------------------
 const LEVEL_CONFIGS = [
-  { level: 1, name: "Level 1: Backyard", targetScore: 10, moleTime: 3400, spawnDelay: 900 },
+  { level: 1, name: "Level 1: Backyard Sensor Test", targetScore: 5, moleTime: 2500, spawnDelay: 500 },
   { level: 2, name: "Level 2: Vegetable Patch", targetScore: 14, moleTime: 2800, spawnDelay: 800 },
   { level: 3, name: "Level 3: Grassy Meadow", targetScore: 18, moleTime: 2300, spawnDelay: 700 },
   { level: 4, name: "Level 4: Deep Woods", targetScore: 22, moleTime: 1900, spawnDelay: 600 },
@@ -464,7 +464,7 @@ class GameScene extends Phaser.Scene {
     this.isPaused = false;
 
     // 1-minute time limit for Level mode
-    this.levelTimeLeft = 60;
+    this.levelTimeLeft = 20;
     this.levelTimerEvent = null;
 
     this.holes = [];
@@ -481,13 +481,10 @@ class GameScene extends Phaser.Scene {
     const CenterY = 400;
 
     // Holes Setup
-    const holePositions = [
-      { x: CenterX, y: CenterY - 150 },
-      { x: CenterX, y: CenterY + 150 },
-      { x: CenterX - 400, y: CenterY - 150 },
-      { x: CenterX - 400, y: CenterY + 150 },
-      { x: CenterX + 400, y: CenterY - 150 },
-      { x: CenterX + 400, y: CenterY + 150 }
+    // Level 1 prototype: only 2 holes for sensor testing
+      const holePositions = [
+      { x: CenterX - 200, y: CenterY },
+      { x: CenterX + 200, y: CenterY }
     ];
 
     holePositions.forEach(pos => {
@@ -514,7 +511,7 @@ class GameScene extends Phaser.Scene {
     if (this.gameMode === 'level') {
       this.levelTimerEvent = this.time.addEvent({
         delay: 1000,
-        repeat: 59,
+        repeat: 19,
         callback: () => {
           if (!this.isPaused) {
             this.levelTimeLeft--;
