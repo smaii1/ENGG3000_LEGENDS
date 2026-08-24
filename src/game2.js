@@ -1,5 +1,3 @@
-// Whack-a-Mole Game 2.0 - Level Progression & Endless Modes
-
 // ----------------------------------------------------
 // Level Definitions & Configurations
 // ----------------------------------------------------
@@ -41,7 +39,7 @@ function saveGameProgress(progress) {
 }
 
 // ----------------------------------------------------
-// UI & Custom Cursor Helpers
+// UI & Custom Cursor Helpers with Tracker Support
 // ----------------------------------------------------
 function createCustomCursor(scene) {
   scene.input.setDefaultCursor('none');
@@ -57,12 +55,21 @@ function createCustomCursor(scene) {
   hammer.setOrigin(0.4, 0.6);
   hammer.setDepth(100);
 
+  const dwellRing = scene.add.graphics();
+  dwellRing.setDepth(101);
+
   const cursorObj = {
     hammer,
     shadow,
+    dwellRing,
     offsetX: 0,
     offsetY: 0,
-    angle: 0,
+    slamAngle: 0,
+    tiltAngle: 0,
+    lastX: 600,
+    lastY: 400,
+    vx: 0,
+    vy: 0,
     whackTween: null,
     shadowTween: null
   };
@@ -70,22 +77,70 @@ function createCustomCursor(scene) {
   return cursorObj;
 }
 
-function updateCustomCursor(pointer, cursorObj) {
+function updateCustomCursor(pointer, cursorObj, scene) {
   if (!cursorObj || !cursorObj.hammer) return;
-  // Shadow is locked exactly onto the active pointer position
-  cursorObj.shadow.x = pointer.x;
-  cursorObj.shadow.y = pointer.y;
 
-  // Hammer follows pointer plus dynamic slam offset and rotation
-  cursorObj.hammer.x = pointer.x + cursorObj.offsetX;
-  cursorObj.hammer.y = pointer.y + cursorObj.offsetY;
-  cursorObj.hammer.angle = cursorObj.angle;
+  const isESP = window.espTracker && window.espTracker.mode === 'esp';
+
+  let targetX = pointer ? pointer.x : 600;
+  let targetY = pointer ? pointer.y : 400;
+
+  if (isESP) {
+    // If real ESP tracking data is streaming and detected, use ESP position
+    if (window.espTracker.isConnected && window.espTracker.raw.isDetected) {
+      targetX = window.espTracker.currentScreenPos.x;
+      targetY = window.espTracker.currentScreenPos.y;
+    } else {
+      // In ESP mode while offline/testing on desktop, mouse drives the tracked position
+      targetX = pointer ? pointer.x : window.espTracker.currentScreenPos.x;
+      targetY = pointer ? pointer.y : window.espTracker.currentScreenPos.y;
+      window.espTracker.currentScreenPos.x = targetX;
+      window.espTracker.currentScreenPos.y = targetY;
+    }
+  }
+
+  // Calculate movement velocity vector & angle
+  const dx = targetX - cursorObj.lastX;
+  const dy = targetY - cursorObj.lastY;
+  cursorObj.lastX = targetX;
+  cursorObj.lastY = targetY;
+
+  // Exponential moving average for velocity
+  cursorObj.vx = cursorObj.vx * 0.65 + dx * 0.35;
+  cursorObj.vy = cursorObj.vy * 0.65 + dy * 0.35;
+
+  const speed = Math.sqrt(cursorObj.vx * cursorObj.vx + cursorObj.vy * cursorObj.vy);
+
+  // When moving, dynamically tilt the hammer into the direction of motion
+  let targetTilt = 0;
+  if (speed > 0.6) {
+    // Moving right leans clockwise (+), moving left leans counter-clockwise (-)
+    // Vertical velocity adds a slight forward/backward pitch
+    targetTilt = Phaser.Math.Clamp(cursorObj.vx * 2.2 + cursorObj.vy * 0.35, -35, 35);
+  }
+
+  // Smoothly interpolate towards target tilt (spring back to 0 when stopped)
+  cursorObj.tiltAngle += (targetTilt - cursorObj.tiltAngle) * 0.22;
+
+  // Shadow is locked exactly onto the active tracking/pointer position
+  cursorObj.shadow.x = targetX;
+  cursorObj.shadow.y = targetY;
+
+  // Hammer follows position plus dynamic slam offset and combined rotation
+  cursorObj.hammer.x = targetX + cursorObj.offsetX;
+  cursorObj.hammer.y = targetY + cursorObj.offsetY;
+  cursorObj.hammer.angle = cursorObj.slamAngle + cursorObj.tiltAngle;
 }
 
 function triggerWhackAnimation(scene, cursorObj) {
   if (!cursorObj || !cursorObj.hammer) return;
 
-  // Cancel any existing whack tween to prevent animation lock on spam clicks
+  // Audio whack impact feedback
+  if (window.espTracker) {
+    window.espTracker.playWhackSound();
+  }
+
+  // Cancel any existing whack tween to prevent animation lock on spam
   if (cursorObj.whackTween) {
     cursorObj.whackTween.stop();
     cursorObj.whackTween = null;
@@ -100,7 +155,7 @@ function triggerWhackAnimation(scene, cursorObj) {
     targets: cursorObj,
     offsetX: 80,
     offsetY: 30,
-    angle: -70,
+    slamAngle: -70,
     duration: 60,
     ease: 'Quad.easeOut',
     yoyo: true,
@@ -113,7 +168,7 @@ function triggerWhackAnimation(scene, cursorObj) {
     onComplete: () => {
       cursorObj.offsetX = 0;
       cursorObj.offsetY = 0;
-      cursorObj.angle = 0;
+      cursorObj.slamAngle = 0;
       cursorObj.whackTween = null;
     }
   });
@@ -138,6 +193,9 @@ function renderBackground(scene) {
   return bg;
 }
 
+// ----------------------------------------------------
+// Button Helper
+// ----------------------------------------------------
 function createPixelButton(scene, x, y, width, height, text, onClick, options = {}) {
   const container = scene.add.container(x, y).setDepth(options.depth || 50);
   const bgColor = options.bgColor !== undefined ? options.bgColor : 0x27ae60;
@@ -150,6 +208,11 @@ function createPixelButton(scene, x, y, width, height, text, onClick, options = 
   const bg = scene.add.rectangle(0, 0, width, height, isDisabled ? 0x4a4a4a : bgColor);
   bg.setStrokeStyle(4, isDisabled ? 0x222222 : borderColor, 1);
 
+  // Dwell fill progress bar on button
+  const dwellFill = scene.add.rectangle(-width / 2, 0, 0, height - 8, 0xffffff, 0.35);
+  dwellFill.setOrigin(0, 0.5);
+  dwellFill.setVisible(false);
+
   const label = scene.add.text(0, 0, text, {
     fontFamily: PIXEL_FONT,
     fontSize: options.fontSize || '22px',
@@ -160,7 +223,24 @@ function createPixelButton(scene, x, y, width, height, text, onClick, options = 
     strokeThickness: 3
   }).setOrigin(0.5);
 
-  container.add([shadow, bg, label]);
+  container.add([shadow, bg, dwellFill, label]);
+
+  const btnData = {
+    container,
+    bg,
+    dwellFill,
+    label,
+    x,
+    y,
+    width,
+    height,
+    bgColor,
+    hoverColor,
+    onClick,
+    isDisabled,
+    dwellTime: 0,
+    isHovered: false
+  };
 
   if (!isDisabled) {
     bg.setInteractive({ useHandCursor: false });
@@ -181,7 +261,76 @@ function createPixelButton(scene, x, y, width, height, text, onClick, options = 
     });
   }
 
+  // Register with scene for hands-free dwell detection
+  scene.registeredButtons = scene.registeredButtons || [];
+  scene.registeredButtons.push(btnData);
+
+  container.btnData = btnData;
   return container;
+}
+
+function processSceneButtonDwell(scene, delta) {
+  if (!scene.registeredButtons || !scene.cursor || !scene.cursor.shadow) return;
+
+  // Only use dwell button selection when in ESP Body Tracking mode
+  const isESPMode = window.espTracker && window.espTracker.mode === 'esp' && !scene.cursor.usingMouse;
+  if (!isESPMode) {
+    scene.registeredButtons.forEach(btn => {
+      if (btn.dwellFill && btn.dwellFill.visible) {
+        btn.dwellTime = 0;
+        btn.dwellFill.width = 0;
+        btn.dwellFill.setVisible(false);
+      }
+    });
+    return;
+  }
+
+  const curX = scene.cursor.shadow.x;
+  const curY = scene.cursor.shadow.y;
+
+  scene.registeredButtons.forEach(btn => {
+    if (btn.isDisabled || !btn.container.visible) {
+      btn.dwellTime = 0;
+      if (btn.dwellFill) btn.dwellFill.setVisible(false);
+      return;
+    }
+
+    const halfW = btn.width / 2;
+    const halfH = btn.height / 2;
+    const isInside = (curX >= btn.x - halfW && curX <= btn.x + halfW &&
+      curY >= btn.y - halfH && curY <= btn.y + halfH);
+
+    if (isInside) {
+      btn.isHovered = true;
+      btn.bg.setFillStyle(btn.hoverColor);
+      btn.dwellTime += delta;
+      if (btn.dwellFill) {
+        btn.dwellFill.setVisible(true);
+        const progress = Math.min(1.0, btn.dwellTime / 900); // 900ms dwell activation
+        btn.dwellFill.width = (btn.width - 8) * progress;
+      }
+
+      if (btn.dwellTime >= 900) {
+        btn.dwellTime = 0;
+        if (btn.dwellFill) {
+          btn.dwellFill.width = 0;
+          btn.dwellFill.setVisible(false);
+        }
+        triggerWhackAnimation(scene, scene.cursor);
+        btn.onClick();
+      }
+    } else {
+      if (btn.isHovered) {
+        btn.isHovered = false;
+        btn.bg.setFillStyle(btn.bgColor);
+        btn.dwellTime = 0;
+        if (btn.dwellFill) {
+          btn.dwellFill.width = 0;
+          btn.dwellFill.setVisible(false);
+        }
+      }
+    }
+  });
 }
 
 // ----------------------------------------------------
@@ -215,29 +364,30 @@ class MenuScene extends Phaser.Scene {
   }
 
   create() {
+    this.registeredButtons = [];
     renderBackground(this);
     this.cursor = createCustomCursor(this);
 
     this.add.rectangle(600, 400, 1200, 800, 0x000000, 0.35).setDepth(1);
 
     // Title Card with pixel border
-    const titlePanel = this.add.container(600, 180).setDepth(2);
-    const panelBg = this.add.rectangle(0, 0, 680, 140, 0x1e272e, 0.9);
+    const titlePanel = this.add.container(600, 170).setDepth(2);
+    const panelBg = this.add.rectangle(0, 0, 680, 130, 0x1e272e, 0.9);
     panelBg.setStrokeStyle(4, 0xf1c40f, 1);
-    const panelShadow = this.add.rectangle(5, 5, 680, 140, 0x000000, 0.6);
+    const panelShadow = this.add.rectangle(5, 5, 680, 130, 0x000000, 0.6);
 
     const title = this.add.text(0, -18, 'WHACK-A-MOLE', {
       fontFamily: PIXEL_FONT,
-      fontSize: '56px',
+      fontSize: '54px',
       fontStyle: 'bold',
       color: '#f1c40f',
       stroke: '#000000',
       strokeThickness: 6
     }).setOrigin(0.5);
 
-    const subtitle = this.add.text(0, 36, 'SELECT GAME MODE', {
+    const subtitle = this.add.text(0, 36, 'BODY TRACKING ARCADE', {
       fontFamily: PIXEL_FONT,
-      fontSize: '22px',
+      fontSize: '20px',
       fontStyle: 'bold',
       color: '#ffffff',
       stroke: '#000000',
@@ -260,26 +410,44 @@ class MenuScene extends Phaser.Scene {
     });
 
     // Buttons
-    createPixelButton(this, 600, 380, 360, 70, '⭐ LEVELS MODE', () => {
+    createPixelButton(this, 600, 360, 360, 65, '⭐ LEVELS MODE', () => {
       this.scene.start('LevelSelectScene');
     }, { bgColor: 0x27ae60, hoverColor: 0x2ecc71, borderColor: 0x145a32, fontSize: '24px' });
 
-    createPixelButton(this, 600, 480, 360, 70, '⚡ ENDLESS MODE', () => {
+    createPixelButton(this, 600, 450, 360, 65, '⚡ ENDLESS MODE', () => {
       this.scene.start('GameScene', { mode: 'endless' });
     }, { bgColor: 0xd35400, hoverColor: 0xe67e22, borderColor: 0x7e3100, fontSize: '24px' });
 
-    // Endless Best
+    // Mode Toggle Button (ESP Tracker vs Mouse)
+    const updateMenuModeBtn = () => {
+      if (this.modeBtn && this.modeBtn.btnData && this.modeBtn.btnData.label) {
+        this.modeBtn.btnData.label.setText(window.espTracker.getModeLabel());
+      }
+    };
+
+    this.modeBtn = createPixelButton(this, 600, 540, 360, 55, window.espTracker.getModeLabel(), () => {
+      window.espTracker.toggleMode();
+      updateMenuModeBtn();
+    }, { bgColor: 0x2980b9, hoverColor: 0x3498db, borderColor: 0x1a5276, fontSize: '18px' });
+
+    this.modeChangeCb = () => updateMenuModeBtn();
+    window.espTracker.on('modeChange', this.modeChangeCb);
+    this.events.on('shutdown', () => {
+      if (this.modeChangeCb) window.espTracker.off('modeChange', this.modeChangeCb);
+    });
+
+    // Tracker Status Hint Bar at bottom
     const progress = getGameProgress();
-    const bestBox = this.add.container(600, 600).setDepth(3);
-    const bestBg = this.add.rectangle(0, 0, 360, 44, 0x111111, 0.85);
-    bestBg.setStrokeStyle(3, 0xffffff, 0.4);
-    const bestText = this.add.text(0, 0, `ENDLESS BEST: ${progress.endlessHighScore}`, {
+    const bestBox = this.add.container(600, 640).setDepth(3);
+    const bestBg = this.add.rectangle(0, 0, 440, 40, 0x111111, 0.85);
+    bestBg.setStrokeStyle(2, 0xffffff, 0.3);
+    const bestText = this.add.text(0, 0, `ENDLESS BEST: ${progress.endlessHighScore} | DWELL TO SELECT`, {
       fontFamily: PIXEL_FONT,
-      fontSize: '18px',
+      fontSize: '16px',
       fontStyle: 'bold',
       color: '#f1c40f',
       stroke: '#000000',
-      strokeThickness: 3
+      strokeThickness: 2
     }).setOrigin(0.5);
     bestBox.add([bestBg, bestText]);
 
@@ -288,8 +456,12 @@ class MenuScene extends Phaser.Scene {
     });
   }
 
-  update() {
-    updateCustomCursor(this.input.activePointer, this.cursor);
+  update(time, delta) {
+    if (window.espTracker) {
+      window.espTracker.update(delta);
+    }
+    updateCustomCursor(this.input.activePointer, this.cursor, this);
+    processSceneButtonDwell(this, delta);
   }
 }
 
@@ -302,18 +474,19 @@ class LevelSelectScene extends Phaser.Scene {
   }
 
   create() {
+    this.registeredButtons = [];
     renderBackground(this);
     this.cursor = createCustomCursor(this);
 
     this.add.rectangle(600, 400, 1200, 800, 0x000000, 0.5).setDepth(1);
 
     // Header
-    const headerBox = this.add.container(600, 85).setDepth(2);
-    const headerBg = this.add.rectangle(0, 0, 440, 60, 0x1e272e, 0.95);
+    const headerBox = this.add.container(600, 75).setDepth(2);
+    const headerBg = this.add.rectangle(0, 0, 440, 56, 0x1e272e, 0.95);
     headerBg.setStrokeStyle(4, 0xf1c40f, 1);
     const headerTxt = this.add.text(0, 0, 'SELECT LEVEL', {
       fontFamily: PIXEL_FONT,
-      fontSize: '34px',
+      fontSize: '32px',
       fontStyle: 'bold',
       color: '#ffffff',
       stroke: '#000000',
@@ -329,7 +502,7 @@ class LevelSelectScene extends Phaser.Scene {
     const cardH = 190;
     const startX = 300;
     const spacingX = 300;
-    const startY = 240;
+    const startY = 230;
     const spacingY = 225;
 
     LEVEL_CONFIGS.forEach((cfg, idx) => {
@@ -345,7 +518,13 @@ class LevelSelectScene extends Phaser.Scene {
       const cardShadow = this.add.rectangle(4, 4, cardW, cardH, 0x000000, 0.5);
       const cardBg = this.add.rectangle(0, 0, cardW, cardH, isUnlocked ? 0x1b281b : 0x222222, 0.92);
       cardBg.setStrokeStyle(4, isUnlocked ? 0x2ecc71 : 0x555555, 1);
-      card.add([cardShadow, cardBg]);
+
+      // Card Dwell Fill
+      const dwellFill = this.add.rectangle(-cardW / 2, 0, 0, cardH - 8, 0xffffff, 0.25);
+      dwellFill.setOrigin(0, 0.5);
+      dwellFill.setVisible(false);
+
+      card.add([cardShadow, cardBg, dwellFill]);
 
       if (isUnlocked) {
         cardBg.setInteractive({ useHandCursor: false });
@@ -404,6 +583,25 @@ class LevelSelectScene extends Phaser.Scene {
         }).setOrigin(0.5);
 
         card.add([lvlTitle, targetTxt, starsTxt, bestTxt]);
+
+        // Register card for dwell navigation
+        this.registeredButtons.push({
+          container: card,
+          bg: cardBg,
+          dwellFill,
+          x: cx,
+          y: cy,
+          width: cardW,
+          height: cardH,
+          bgColor: 0x1b281b,
+          hoverColor: 0x27ae60,
+          isDisabled: false,
+          dwellTime: 0,
+          isHovered: false,
+          onClick: () => {
+            this.scene.start('GameScene', { mode: 'level', levelIndex: idx });
+          }
+        });
       } else {
         // Locked card
         const lockIcon = this.add.text(0, -30, '🔒', { fontSize: '38px' }).setOrigin(0.5);
@@ -426,7 +624,7 @@ class LevelSelectScene extends Phaser.Scene {
     });
 
     // Back to Menu Button
-    createPixelButton(this, 600, 710, 240, 55, '⬅ MAIN MENU', () => {
+    createPixelButton(this, 600, 715, 240, 52, '⬅ MAIN MENU', () => {
       this.scene.start('MenuScene');
     }, { bgColor: 0x555555, hoverColor: 0x777777, borderColor: 0x222222, fontSize: '18px' });
 
@@ -435,8 +633,12 @@ class LevelSelectScene extends Phaser.Scene {
     });
   }
 
-  update() {
-    updateCustomCursor(this.input.activePointer, this.cursor);
+  update(time, delta) {
+    if (window.espTracker) {
+      window.espTracker.update(delta);
+    }
+    updateCustomCursor(this.input.activePointer, this.cursor, this);
+    processSceneButtonDwell(this, delta);
   }
 }
 
@@ -463,6 +665,17 @@ class GameScene extends Phaser.Scene {
     this.gameComplete = false;
     this.isPaused = false;
 
+    // Dead-Zone safety alert & count-in state
+    this.isDeadZonePaused = false;
+    this.isCountingDown = false;
+    this.countInSeconds = 3;
+    this.deadZoneModalContainer = null;
+    this.countInModalContainer = null;
+
+    // Hands-free dwell hit accumulator
+    this.dwellTime = 0;
+    this.dwellTargetMole = null;
+
     // 1-minute time limit for Level mode
     this.levelTimeLeft = 60;
     this.levelTimerEvent = null;
@@ -471,11 +684,16 @@ class GameScene extends Phaser.Scene {
     this.moles = [];
     this.timerTween = null;
     this.pauseModalContainer = null;
+    this.registeredButtons = [];
   }
 
   create() {
+    this.registeredButtons = [];
     renderBackground(this);
     this.cursor = createCustomCursor(this);
+
+    // Dwell Progress Ring Graphic
+    this.dwellGraphics = this.add.graphics().setDepth(15);
 
     const CenterX = 600;
     const CenterY = 400;
@@ -507,7 +725,7 @@ class GameScene extends Phaser.Scene {
     this.timerBar = this.createMoleTimerBar();
     this.timerBar.container.setVisible(false);
 
-    // Setup Pixel-styled HUD
+    // Setup Uncluttered Pixel-styled HUD
     this.setupHUD();
 
     // Level 60s Countdown Timer
@@ -516,7 +734,7 @@ class GameScene extends Phaser.Scene {
         delay: 1000,
         repeat: 59,
         callback: () => {
-          if (!this.isPaused) {
+          if (!this.isPaused && !this.isDeadZonePaused && !this.isCountingDown) {
             this.levelTimeLeft--;
             this.updateHUD();
             if (this.levelTimeLeft <= 0) {
@@ -532,9 +750,16 @@ class GameScene extends Phaser.Scene {
       this.togglePause();
     });
 
+    // Spacebar fallback for manual whacking
+    this.input.keyboard.on('keydown-SPACE', () => {
+      if (this.canWhack && !this.gameOver && !this.gameComplete && !this.isPaused && !this.isDeadZonePaused && !this.isCountingDown) {
+        this.whackMole();
+      }
+    });
+
     // Pointer Input for Whacking
     this.input.on('pointerdown', () => {
-      if (this.canWhack && !this.gameOver && !this.gameComplete && !this.isPaused) {
+      if (this.canWhack && !this.gameOver && !this.gameComplete && !this.isPaused && !this.isDeadZonePaused && !this.isCountingDown) {
         this.whackMole();
       }
     });
@@ -543,8 +768,227 @@ class GameScene extends Phaser.Scene {
     this.time.delayedCall(1000, () => this.activateRandomMole());
   }
 
-  update() {
-    updateCustomCursor(this.input.activePointer, this.cursor);
+  update(time, delta) {
+    if (window.espTracker) {
+      window.espTracker.update(delta);
+    }
+
+    updateCustomCursor(this.input.activePointer, this.cursor, this);
+    processSceneButtonDwell(this, delta);
+
+    // ----------------------------------------------------
+    // Dead-Zone Safety Check & State Machine
+    // ----------------------------------------------------
+    if (window.espTracker && window.espTracker.mode === 'esp') {
+      const isDeadZone = window.espTracker.inDeadZone;
+
+      if (isDeadZone && !this.isDeadZonePaused && !this.gameOver && !this.gameComplete) {
+        this.triggerDeadZonePause();
+      } else if (!isDeadZone && this.isDeadZonePaused && !this.isCountingDown) {
+        this.triggerDeadZoneResumeCountdown();
+      }
+    }
+
+    // ----------------------------------------------------
+    // Hands-Free Dwell Whacking on Active Mole (ESP Mode only)
+    // ----------------------------------------------------
+    const isESPMode = window.espTracker && window.espTracker.mode === 'esp';
+    if (isESPMode && this.activeMole && this.canWhack && !this.isPaused && !this.isDeadZonePaused && !this.isCountingDown && !this.gameOver && !this.gameComplete) {
+      const strikeX = this.cursor.shadow.x;
+      const strikeY = this.cursor.shadow.y;
+      const dist = Phaser.Math.Distance.Between(strikeX, strikeY, this.activeMole.x, this.activeMole.y);
+
+      if (dist < 85) {
+        this.dwellTime += delta;
+        this.dwellTargetMole = this.activeMole;
+
+        if (this.dwellTime >= 240) {
+          // Ring completed: IMMEDIATELY wipe ring before triggering whack
+          this.clearDwellRing();
+          this.dwellTime = 0;
+          this.dwellTargetMole = null;
+          this.whackMole();
+        } else {
+          // Draw radial progress arc around mole
+          const progress = Math.min(1.0, this.dwellTime / 240);
+          this.drawDwellRing(this.activeMole.x, this.activeMole.y, progress);
+        }
+      } else {
+        if (this.dwellTime > 0) {
+          this.dwellTime = 0;
+          this.clearDwellRing();
+        }
+      }
+    } else {
+      if (this.dwellTime > 0) {
+        this.dwellTime = 0;
+      }
+      this.clearDwellRing();
+    }
+  }
+
+  drawDwellRing(x, y, progress) {
+    this.dwellGraphics.clear();
+    if (progress <= 0) return;
+
+    // Background circle
+    this.dwellGraphics.lineStyle(6, 0x000000, 0.4);
+    this.dwellGraphics.beginPath();
+    this.dwellGraphics.arc(x, y, 54, 0, Phaser.Math.PI2);
+    this.dwellGraphics.strokePath();
+
+    // Active progress arc
+    this.dwellGraphics.lineStyle(6, 0xf1c40f, 0.95);
+    this.dwellGraphics.beginPath();
+    const startAngle = Phaser.Math.DegToRad(-90);
+    const endAngle = startAngle + Phaser.Math.DegToRad(360 * progress);
+    this.dwellGraphics.arc(x, y, 54, startAngle, endAngle, false);
+    this.dwellGraphics.strokePath();
+  }
+
+  clearDwellRing() {
+    this.dwellGraphics.clear();
+  }
+
+  // ----------------------------------------------------
+  // Dead-Zone Safety Alert (Buzzer + Visual Warning + Pause)
+  // ----------------------------------------------------
+  triggerDeadZonePause() {
+    if (this.isDeadZonePaused) return;
+    this.isDeadZonePaused = true;
+
+    // Pause timers & animations
+    if (this.levelTimerEvent) this.levelTimerEvent.paused = true;
+    if (this.timerTween) this.timerTween.pause();
+
+    // Create Warning Overlay
+    this.deadZoneModalContainer = this.add.container(600, 400).setDepth(80);
+
+    // Flashing red border / overlay
+    const overlay = this.add.rectangle(0, 0, 1200, 800, 0x8b0000, 0.65);
+    const border = this.add.rectangle(0, 0, 1160, 760);
+    border.setStrokeStyle(10, 0xff0000, 1);
+
+    const bannerBg = this.add.rectangle(0, 0, 860, 160, 0x111111, 0.95);
+    bannerBg.setStrokeStyle(5, 0xe74c3c, 1);
+
+    const iconTxt = this.add.text(0, -45, '⚠️ DEAD ZONE ACTIVE (< 60CM FROM SCREEN) ⚠️', {
+      fontFamily: PIXEL_FONT,
+      fontSize: '26px',
+      fontStyle: 'bold',
+      color: '#e74c3c',
+      stroke: '#000000',
+      strokeThickness: 5
+    }).setOrigin(0.5);
+
+    const subTxt = this.add.text(0, 25, 'PLEASE STEP BACK INTO THE PLAY AREA TO RESUME', {
+      fontFamily: PIXEL_FONT,
+      fontSize: '22px',
+      fontStyle: 'bold',
+      color: '#f1c40f',
+      stroke: '#000000',
+      strokeThickness: 4
+    }).setOrigin(0.5);
+
+    this.deadZoneModalContainer.add([overlay, border, bannerBg, iconTxt, subTxt]);
+
+    // Flashing pulsing effect
+    this.tweens.add({
+      targets: [overlay, border],
+      alpha: 0.25,
+      duration: 350,
+      yoyo: true,
+      repeat: -1
+    });
+  }
+
+  // ----------------------------------------------------
+  // Count-in Upon Stepping Back Into Play Area (3.. 2.. 1.. GO!)
+  // ----------------------------------------------------
+  triggerDeadZoneResumeCountdown() {
+    if (this.isCountingDown) return;
+    this.isCountingDown = true;
+
+    // Destroy dead zone warning modal
+    if (this.deadZoneModalContainer) {
+      this.deadZoneModalContainer.destroy();
+      this.deadZoneModalContainer = null;
+    }
+
+    // Create Count-in Modal
+    this.countInModalContainer = this.add.container(600, 400).setDepth(80);
+
+    const overlay = this.add.rectangle(0, 0, 1200, 800, 0x000000, 0.45);
+    const countCard = this.add.rectangle(0, 0, 360, 200, 0x1e272e, 0.95);
+    countCard.setStrokeStyle(4, 0x2ecc71, 1);
+
+    const readyTxt = this.add.text(0, -50, 'READY...', {
+      fontFamily: PIXEL_FONT,
+      fontSize: '24px',
+      fontStyle: 'bold',
+      color: '#f1c40f',
+      stroke: '#000000',
+      strokeThickness: 3
+    }).setOrigin(0.5);
+
+    const numberTxt = this.add.text(0, 20, '3', {
+      fontFamily: PIXEL_FONT,
+      fontSize: '64px',
+      fontStyle: 'bold',
+      color: '#2ecc71',
+      stroke: '#000000',
+      strokeThickness: 6
+    }).setOrigin(0.5);
+
+    this.countInModalContainer.add([overlay, countCard, readyTxt, numberTxt]);
+
+    let step = 3;
+    const countdownEvent = this.time.addEvent({
+      delay: 800,
+      repeat: 3,
+      callback: () => {
+        // If player stepped back into dead zone during count-in, cancel and re-trigger warning
+        if (window.espTracker && window.espTracker.inDeadZone) {
+          countdownEvent.remove();
+          if (this.countInModalContainer) {
+            this.countInModalContainer.destroy();
+            this.countInModalContainer = null;
+          }
+          this.isCountingDown = false;
+          this.triggerDeadZonePause();
+          return;
+        }
+
+        step--;
+        if (step === 2) {
+          numberTxt.setText('2');
+          numberTxt.setScale(1.4);
+          this.tweens.add({ targets: numberTxt, scale: 1.0, duration: 250 });
+        } else if (step === 1) {
+          numberTxt.setText('1');
+          numberTxt.setScale(1.4);
+          this.tweens.add({ targets: numberTxt, scale: 1.0, duration: 250 });
+        } else if (step === 0) {
+          readyTxt.setText('RESUMING!');
+          numberTxt.setText('GO!');
+          numberTxt.setColor('#f1c40f');
+          numberTxt.setScale(1.5);
+          this.tweens.add({ targets: numberTxt, scale: 1.0, duration: 250 });
+        } else {
+          // Finish Count-in and unpause
+          if (this.countInModalContainer) {
+            this.countInModalContainer.destroy();
+            this.countInModalContainer = null;
+          }
+          this.isCountingDown = false;
+          this.isDeadZonePaused = false;
+
+          // Resume game timers & mole tweens
+          if (this.levelTimerEvent && !this.isPaused) this.levelTimerEvent.paused = false;
+          if (this.timerTween && !this.isPaused) this.timerTween.resume();
+        }
+      }
+    });
   }
 
   createMoleTimerBar() {
@@ -675,6 +1119,23 @@ class GameScene extends Phaser.Scene {
     pauseBg.on('pointerover', () => pauseBg.setFillStyle(0x555555));
     pauseBg.on('pointerout', () => pauseBg.setFillStyle(0x333333));
     pauseBg.on('pointerup', () => this.togglePause());
+
+    // Register pause badge for dwell interaction
+    this.registeredButtons.push({
+      container: pauseBadge,
+      bg: pauseBg,
+      dwellFill: { setVisible: () => { }, width: 0 },
+      x: 1110,
+      y: 36,
+      width: 90,
+      height: 34,
+      bgColor: 0x333333,
+      hoverColor: 0x555555,
+      isDisabled: false,
+      dwellTime: 0,
+      isHovered: false,
+      onClick: () => this.togglePause()
+    });
   }
 
   updateHUD() {
@@ -710,6 +1171,9 @@ class GameScene extends Phaser.Scene {
     }
   }
 
+  // ----------------------------------------------------
+  // Pause Menu with Integrated ESP32 Tracker Status Panel
+  // ----------------------------------------------------
   pauseGame() {
     this.isPaused = true;
     if (this.levelTimerEvent) this.levelTimerEvent.paused = true;
@@ -718,14 +1182,14 @@ class GameScene extends Phaser.Scene {
     // Create Pause Modal
     this.pauseModalContainer = this.add.container(600, 400).setDepth(60);
 
-    const overlay = this.add.rectangle(0, 0, 1200, 800, 0x000000, 0.7);
+    const overlay = this.add.rectangle(0, 0, 1200, 800, 0x000000, 0.75);
     overlay.setInteractive(); // Blocks clicks to background
 
-    const panelBg = this.add.rectangle(0, 0, 480, 360, 0x1e272e, 0.96);
+    const panelBg = this.add.rectangle(0, 0, 680, 520, 0x1e272e, 0.98);
     panelBg.setStrokeStyle(4, 0xf1c40f, 1);
-    const panelShadow = this.add.rectangle(5, 5, 480, 360, 0x000000, 0.6);
+    const panelShadow = this.add.rectangle(5, 5, 680, 520, 0x000000, 0.6);
 
-    const title = this.add.text(0, -120, 'GAME PAUSED', {
+    const title = this.add.text(0, -215, 'GAME PAUSED', {
       fontFamily: PIXEL_FONT,
       fontSize: '36px',
       fontStyle: 'bold',
@@ -734,20 +1198,71 @@ class GameScene extends Phaser.Scene {
       strokeThickness: 5
     }).setOrigin(0.5);
 
-    this.pauseModalContainer.add([overlay, panelShadow, panelBg, title]);
+    // ESP32 Status Sub-Panel
+    const isESP = window.espTracker && window.espTracker.mode === 'esp';
+    const isConn = window.espTracker && window.espTracker.isConnected;
+    const statusColor = isConn ? '#2ecc71' : '#e74c3c';
+    const statusText = isConn ? `🟢 ESP CONNECTED (${window.espTracker.host})` : `🔴 ESP OFFLINE (${window.espTracker.host})`;
+
+    const trackerBox = this.add.rectangle(0, -110, 620, 110, 0x111111, 0.9);
+    trackerBox.setStrokeStyle(2, 0x555555, 1);
+
+    const trackerTitle = this.add.text(0, -145, '📡 ESP32 ULTRASONIC TRACKING STATUS', {
+      fontFamily: PIXEL_FONT,
+      fontSize: '15px',
+      fontStyle: 'bold',
+      color: '#bdc3c7'
+    }).setOrigin(0.5);
+
+    const connLabel = this.add.text(-280, -118, statusText, {
+      fontFamily: PIXEL_FONT,
+      fontSize: '14px',
+      fontStyle: 'bold',
+      color: statusColor
+    });
+
+    const raw = window.espTracker ? window.espTracker.raw : { xCm: 0, yCm: 0, confidence: 0, secOnline: false };
+    const teleLabel = this.add.text(-280, -90,
+      `Pos: (${raw.xCm.toFixed(0)}cm, ${raw.yCm.toFixed(0)}cm) | Conf: ${(raw.confidence * 100).toFixed(0)}% | Sec Node: ${raw.secOnline ? 'ONLINE' : 'OFFLINE'}`, {
+      fontFamily: PIXEL_FONT,
+      fontSize: '13px',
+      color: '#f1c40f'
+    });
+
+    this.pauseModalContainer.add([overlay, panelShadow, panelBg, title, trackerBox, trackerTitle, connLabel, teleLabel]);
+
+    // Mode Toggle Button inside Pause Menu
+    const updatePauseModeBtn = () => {
+      if (modeBtn && modeBtn.btnData && modeBtn.btnData.label) {
+        modeBtn.btnData.label.setText(window.espTracker.getModeLabel());
+      }
+    };
+
+    const modeBtn = createPixelButton(this, 600 - 150, -35 + 400, 290, 44, window.espTracker.getModeLabel(), () => {
+      window.espTracker.toggleMode();
+      updatePauseModeBtn();
+    }, { bgColor: 0x2980b9, hoverColor: 0x3498db, borderColor: 0x1a5276, fontSize: '15px', depth: 65 });
+
+    // Mirror X Toggle Button
+    const mirrorText = window.espTracker && window.espTracker.mirrorX ? 'MIRROR X: ON 🪞' : 'MIRROR X: OFF';
+    const mirrorBtn = createPixelButton(this, 600 + 150, -35 + 400, 260, 44, mirrorText, () => {
+      const nextMirror = !(window.espTracker.mirrorX);
+      window.espTracker.setMirrorX(nextMirror);
+      mirrorBtn.btnData.label.setText(nextMirror ? 'MIRROR X: ON 🪞' : 'MIRROR X: OFF');
+    }, { bgColor: 0x8e44ad, hoverColor: 0x9b59b6, borderColor: 0x5b2c6f, fontSize: '15px', depth: 65 });
 
     // Resume Button
-    const resumeBtn = createPixelButton(this, 600, 350, 260, 52, 'RESUME', () => {
+    const resumeBtn = createPixelButton(this, 600, 30 + 400, 320, 50, 'RESUME GAME ▶', () => {
       this.resumeGame();
     }, { bgColor: 0x27ae60, hoverColor: 0x2ecc71, borderColor: 0x145a32, depth: 65 });
 
     // Restart Button
-    const restartBtn = createPixelButton(this, 600, 420, 260, 52, 'RESTART', () => {
+    const restartBtn = createPixelButton(this, 600, 95 + 400, 320, 50, 'RESTART LEVEL ↺', () => {
       this.scene.start('GameScene', { mode: this.gameMode, levelIndex: this.levelIndex });
-    }, { bgColor: 0x2980b9, hoverColor: 0x3498db, borderColor: 0x1a5276, depth: 65 });
+    }, { bgColor: 0xd35400, hoverColor: 0xe67e22, borderColor: 0x7e3100, depth: 65 });
 
     // Exit to Menu Button
-    const exitBtn = createPixelButton(this, 600, 490, 260, 52, this.gameMode === 'level' ? 'LEVEL SELECT' : 'MAIN MENU', () => {
+    const exitBtn = createPixelButton(this, 600, 160 + 400, 320, 50, this.gameMode === 'level' ? 'LEVEL SELECT ☰' : 'MAIN MENU ☰', () => {
       if (this.gameMode === 'level') {
         this.scene.start('LevelSelectScene');
       } else {
@@ -755,17 +1270,23 @@ class GameScene extends Phaser.Scene {
       }
     }, { bgColor: 0x7f8c8d, hoverColor: 0x95a5a6, borderColor: 0x333333, depth: 65 });
 
-    this.pauseModalContainer.buttons = [resumeBtn, restartBtn, exitBtn];
+    this.pauseModalContainer.buttons = [modeBtn, mirrorBtn, resumeBtn, restartBtn, exitBtn];
   }
 
   resumeGame() {
     this.isPaused = false;
-    if (this.levelTimerEvent) this.levelTimerEvent.paused = false;
-    if (this.timerTween) this.timerTween.resume();
+    if (this.levelTimerEvent && !this.isDeadZonePaused && !this.isCountingDown) this.levelTimerEvent.paused = false;
+    if (this.timerTween && !this.isDeadZonePaused && !this.isCountingDown) this.timerTween.resume();
 
     if (this.pauseModalContainer) {
       if (this.pauseModalContainer.buttons) {
-        this.pauseModalContainer.buttons.forEach(btn => btn.destroy());
+        this.pauseModalContainer.buttons.forEach(btn => {
+          // Remove from registeredButtons
+          if (btn.btnData) {
+            this.registeredButtons = this.registeredButtons.filter(b => b !== btn.btnData);
+          }
+          btn.destroy();
+        });
       }
       this.pauseModalContainer.destroy();
       this.pauseModalContainer = null;
@@ -787,7 +1308,7 @@ class GameScene extends Phaser.Scene {
   }
 
   activateRandomMole() {
-    if (this.activeMole || this.gameOver || this.gameComplete || this.isPaused) {
+    if (this.activeMole || this.gameOver || this.gameComplete || this.isPaused || this.isDeadZonePaused || this.isCountingDown) {
       return;
     }
 
@@ -845,7 +1366,11 @@ class GameScene extends Phaser.Scene {
   }
 
   deactivateMole(mole, wasWhacked = false) {
-    if (!this.activeMole) return;
+    // Immediately clear activeMole and dwell ring so it can never be retargeted while falling
+    this.activeMole = null;
+    this.clearDwellRing();
+    this.dwellTime = 0;
+    this.dwellTargetMole = null;
 
     if (this.timerTween) {
       this.timerTween.stop();
@@ -865,11 +1390,8 @@ class GameScene extends Phaser.Scene {
       ease: 'Back.easeIn',
       onComplete: () => {
         mole.setVisible(false);
-        if (this.activeMole === mole) {
-          this.activeMole = null;
-        }
 
-        if (!this.gameOver && !this.gameComplete && !this.isPaused) {
+        if (!this.gameOver && !this.gameComplete && !this.isPaused && !this.isDeadZonePaused && !this.isCountingDown) {
           const spawnDelay = this.getMoleSpawnDelay();
           this.time.delayedCall(spawnDelay, () => this.activateRandomMole());
         }
@@ -888,6 +1410,12 @@ class GameScene extends Phaser.Scene {
     const dist = Phaser.Math.Distance.Between(strikeX, strikeY, mole.x, mole.y);
 
     if (dist < 85) {
+      // Immediately clear activeMole and wipe dwell ring before starting retract tween
+      this.activeMole = null;
+      this.clearDwellRing();
+      this.dwellTime = 0;
+      this.dwellTargetMole = null;
+
       mole.setTexture('whacked-mole');
       this.score += 1;
       this.updateHUD();
@@ -1200,6 +1728,11 @@ const config = {
   scale: {
     mode: Phaser.Scale.FIT,
     autoCenter: Phaser.Scale.CENTER_BOTH
+  },
+  render: {
+    pixelArt: true,
+    antialias: false,
+    powerPreference: 'high-performance'
   },
   scene: [BootScene, MenuScene, LevelSelectScene, GameScene]
 };
