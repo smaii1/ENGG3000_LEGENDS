@@ -84,8 +84,9 @@ function saveGameProgress(progress) {
 function createCustomCursor(scene) {
   scene.input.setDefaultCursor('none');
 
-  // Shadow ellipse positioned directly on the actual cursor centre
-  const shadow = scene.add.ellipse(0, 0, 60, 30, 0x000000, 0.45);
+  // Shadow ellipse positioned directly on the actual cursor centre (high contrast with white border)
+  const shadow = scene.add.ellipse(0, 0, 64, 32, 0x000000, 0.65);
+  shadow.setStrokeStyle(2, 0xffffff, 0.85);
   shadow.setOrigin(0.5, 0.5);
   shadow.setDepth(99);
 
@@ -203,7 +204,7 @@ function triggerWhackAnimation(scene, cursorObj) {
     onYoyo: () => {
       // Pulse shadow on ground impact
       cursorObj.shadow.setScale(1.25, 1.25);
-      cursorObj.shadow.setAlpha(0.7);
+      cursorObj.shadow.setAlpha(1.0);
     },
     onComplete: () => {
       cursorObj.offsetX = 0;
@@ -217,7 +218,7 @@ function triggerWhackAnimation(scene, cursorObj) {
     targets: cursorObj.shadow,
     scaleX: 1.0,
     scaleY: 1.0,
-    alpha: 0.45,
+    alpha: 0.85,
     duration: 150,
     ease: 'Quad.easeOut',
     onComplete: () => {
