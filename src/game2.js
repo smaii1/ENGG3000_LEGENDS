@@ -2,13 +2,53 @@
 // Level Definitions & Configurations
 // ----------------------------------------------------
 const LEVEL_CONFIGS = [
-  { level: 1, name: "Level 1: Backyard", targetScore: 10, moleTime: 3400, spawnDelay: 900 },
-  { level: 2, name: "Level 2: Vegetable Patch", targetScore: 14, moleTime: 2800, spawnDelay: 800 },
-  { level: 3, name: "Level 3: Grassy Meadow", targetScore: 18, moleTime: 2300, spawnDelay: 700 },
-  { level: 4, name: "Level 4: Deep Woods", targetScore: 22, moleTime: 1900, spawnDelay: 600 },
-  { level: 5, name: "Level 5: Mole Fortress", targetScore: 26, moleTime: 1550, spawnDelay: 500 },
-  { level: 6, name: "Level 6: Whack Master", targetScore: 30, moleTime: 1250, spawnDelay: 400 }
+  { level: 1, name: "Level 1: Backyard", targetScore: 10, moleTime: 3400, spawnDelay: 900, holes: 2 },
+  { level: 2, name: "Level 2: Vegetable Patch", targetScore: 14, moleTime: 2800, spawnDelay: 800, holes: 3 },
+  { level: 3, name: "Level 3: Grassy Meadow", targetScore: 18, moleTime: 2300, spawnDelay: 700, holes: 4 },
+  { level: 4, name: "Level 4: Deep Woods", targetScore: 22, moleTime: 1900, spawnDelay: 600, holes: 6 },
+  { level: 5, name: "Level 5: Mole Fortress", targetScore: 26, moleTime: 1550, spawnDelay: 500, holes: 6 },
+  { level: 6, name: "Level 6: Whack Master", targetScore: 30, moleTime: 1250, spawnDelay: 400, holes: 6 }
 ];
+
+function getHolePositions(count = 6) {
+  const CenterX = 600;
+  const CenterY = 400;
+
+  switch (count) {
+    case 2:
+      // 2 horizontal holes (left and right with comfortable spacing for movement)
+      return [
+        { x: CenterX - 300, y: CenterY },
+        { x: CenterX + 300, y: CenterY }
+      ];
+    case 3:
+      // 3 holes in a balanced triangular layout
+      return [
+        { x: CenterX, y: CenterY - 130 },
+        { x: CenterX - 320, y: CenterY + 130 },
+        { x: CenterX + 320, y: CenterY + 130 }
+      ];
+    case 4:
+      // 4 holes in a 2x2 grid
+      return [
+        { x: CenterX - 300, y: CenterY - 140 },
+        { x: CenterX + 300, y: CenterY - 140 },
+        { x: CenterX - 300, y: CenterY + 140 },
+        { x: CenterX + 300, y: CenterY + 140 }
+      ];
+    case 6:
+    default:
+      // 6 holes in standard 3x2 grid
+      return [
+        { x: CenterX - 400, y: CenterY - 150 },
+        { x: CenterX, y: CenterY - 150 },
+        { x: CenterX + 400, y: CenterY - 150 },
+        { x: CenterX - 400, y: CenterY + 150 },
+        { x: CenterX, y: CenterY + 150 },
+        { x: CenterX + 400, y: CenterY + 150 }
+      ];
+  }
+}
 
 const PROGRESS_KEY = 'whack_a_mole_progress_v1';
 const PIXEL_FONT = '"Courier New", Courier, monospace';
@@ -385,7 +425,7 @@ class MenuScene extends Phaser.Scene {
       strokeThickness: 6
     }).setOrigin(0.5);
 
-    const subtitle = this.add.text(0, 36, 'BODY TRACKING ARCADE', {
+    const subtitle = this.add.text(0, 36, 'ENGG3000 | GROUP 2: LEGENDS', {
       fontFamily: PIXEL_FONT,
       fontSize: '20px',
       fontStyle: 'bold',
@@ -438,10 +478,8 @@ class MenuScene extends Phaser.Scene {
 
     // Tracker Status Hint Bar at bottom
     const progress = getGameProgress();
-    const bestBox = this.add.container(600, 640).setDepth(3);
-    const bestBg = this.add.rectangle(0, 0, 440, 40, 0x111111, 0.85);
-    bestBg.setStrokeStyle(2, 0xffffff, 0.3);
-    const bestText = this.add.text(0, 0, `ENDLESS BEST: ${progress.endlessHighScore} | DWELL TO SELECT`, {
+    const bestBox = this.add.container(840, 450).setDepth(3);
+    const bestText = this.add.text(0, 0, `BEST: ${progress.endlessHighScore}`, {
       fontFamily: PIXEL_FONT,
       fontSize: '16px',
       fontStyle: 'bold',
@@ -449,6 +487,9 @@ class MenuScene extends Phaser.Scene {
       stroke: '#000000',
       strokeThickness: 2
     }).setOrigin(0.5);
+    const textBounds = bestText.getBounds();
+    const bestBg = this.add.rectangle(-40, 0, textBounds.width + 100, textBounds.height + 20, 0x111111, 0.85);
+    bestBg.setStrokeStyle(2, 0xffffff, 0.3);
     bestBox.add([bestBg, bestText]);
 
     this.input.on('pointerdown', () => {
@@ -551,9 +592,9 @@ class LevelSelectScene extends Phaser.Scene {
         }).setOrigin(0.5);
 
         // Target Score
-        const targetTxt = this.add.text(0, -22, `TARGET: ${cfg.targetScore}`, {
+        const targetTxt = this.add.text(0, -22, `TARGET: ${cfg.targetScore}  (${cfg.holes || 6} HOLES)`, {
           fontFamily: PIXEL_FONT,
-          fontSize: '17px',
+          fontSize: '15px',
           fontStyle: 'bold',
           color: '#ffffff',
           stroke: '#000000',
@@ -695,18 +736,11 @@ class GameScene extends Phaser.Scene {
     // Dwell Progress Ring Graphic
     this.dwellGraphics = this.add.graphics().setDepth(15);
 
-    const CenterX = 600;
-    const CenterY = 400;
-
     // Holes Setup
-    const holePositions = [
-      { x: CenterX, y: CenterY - 150 },
-      { x: CenterX, y: CenterY + 150 },
-      { x: CenterX - 400, y: CenterY - 150 },
-      { x: CenterX - 400, y: CenterY + 150 },
-      { x: CenterX + 400, y: CenterY - 150 },
-      { x: CenterX + 400, y: CenterY + 150 }
-    ];
+    const holeCount = (this.gameMode === 'level' && this.levelConfig && this.levelConfig.holes)
+      ? this.levelConfig.holes
+      : 6;
+    const holePositions = getHolePositions(holeCount);
 
     holePositions.forEach(pos => {
       const hole = this.add.image(pos.x, pos.y - 80, 'hole');
