@@ -154,7 +154,7 @@ ENGG3000_LEGENDS/
 ├── index.html
 ├── settings.json
 └── README.md
-
+```
 ## Project Management
 
 SCRUM meetings are held on **Sundays**, with the meeting time adjusted according to team availability.
