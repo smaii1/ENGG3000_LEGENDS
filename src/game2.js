@@ -227,8 +227,11 @@ function triggerWhackAnimation(scene, cursorObj) {
   });
 }
 
-function renderBackground(scene) {
-  const bg = scene.add.image(0, 0, 'background').setOrigin(0, 0);
+function renderBackground(scene, levelConfig = null) {
+  const backgroundKey = levelConfig && levelConfig.level === 2
+    ? 'vegetable-patch'
+    : 'backyard';
+  const bg = scene.add.image(0, 0, backgroundKey).setOrigin(0, 0);
   bg.setDisplaySize(1200, 800);
   bg.setDepth(0);
   return bg;
@@ -383,12 +386,15 @@ class BootScene extends Phaser.Scene {
   }
 
   preload() {
-    this.load.image('background', 'assets/background.png');
+    this.load.image('backyard', 'assets/backyard.png');
+    this.load.image('vegetable-patch', 'assets/vegetable-patch.png');
     this.load.image('hole', 'assets/hole.png');
     this.load.image('hammer', 'assets/hammer1.png');
     this.load.image('mole', 'assets/mole.png');
     this.load.image('whacked-mole', 'assets/whacked-mole.png');
     this.load.image('missed-mole', 'assets/missed-mole.png');
+    this.load.image('rabbit', 'assets/rabbit.png');
+    this.load.image('crying-rabbit', 'assets/crying-rabbit.png');
   }
 
   create() {
@@ -406,7 +412,7 @@ class MenuScene extends Phaser.Scene {
 
   create() {
     this.registeredButtons = [];
-    renderBackground(this);
+    renderBackground(this, this.levelConfig);
     this.cursor = createCustomCursor(this);
 
     this.add.rectangle(600, 400, 1200, 800, 0x000000, 0.35).setDepth(1);
@@ -721,9 +727,13 @@ class GameScene extends Phaser.Scene {
     // 1-minute time limit for Level mode
     this.levelTimeLeft = 60;
     this.levelTimerEvent = null;
+    this.rabbitTimerEvent = null;
 
     this.holes = [];
     this.moles = [];
+    this.rabbit = null;
+    this.activeRabbit = false;
+    this.rabbitHoleIndex = -1;
     this.timerTween = null;
     this.pauseModalContainer = null;
     this.registeredButtons = [];
@@ -731,7 +741,7 @@ class GameScene extends Phaser.Scene {
 
   create() {
     this.registeredButtons = [];
-    renderBackground(this);
+    renderBackground(this, this.levelConfig);
     this.cursor = createCustomCursor(this);
 
     // Dwell Progress Ring Graphic
@@ -755,6 +765,11 @@ class GameScene extends Phaser.Scene {
       mole.setDepth(6);
       this.moles.push(mole);
     });
+
+    this.rabbit = this.add.image(0, 0, 'rabbit');
+    this.rabbit.setScale(3);
+    this.rabbit.setVisible(false);
+    this.rabbit.setDepth(6);
 
     // Create Mole Timer Bar
     this.timerBar = this.createMoleTimerBar();
@@ -801,6 +816,13 @@ class GameScene extends Phaser.Scene {
 
     // Start mole spawning after 1 second
     this.time.delayedCall(1000, () => this.activateRandomMole());
+
+    // A rabbit appears independently every 10 seconds
+    this.rabbitTimerEvent = this.time.addEvent({
+      delay: 10000,
+      loop: true,
+      callback: () => this.activateRandomRabbit()
+    });
   }
 
   update(time, delta) {
@@ -828,14 +850,24 @@ class GameScene extends Phaser.Scene {
     // Hands-Free Dwell Whacking on Active Mole (ESP Mode only)
     // ----------------------------------------------------
     const isESPMode = window.espTracker && window.espTracker.mode === 'esp';
-    if (isESPMode && this.activeMole && this.canWhack && !this.isPaused && !this.isDeadZonePaused && !this.isCountingDown && !this.gameOver && !this.gameComplete) {
+    if (isESPMode && (this.activeMole || this.activeRabbit) && this.canWhack && !this.isPaused && !this.isDeadZonePaused && !this.isCountingDown && !this.gameOver && !this.gameComplete) {
       const strikeX = this.cursor.shadow.x;
       const strikeY = this.cursor.shadow.y;
-      const dist = Phaser.Math.Distance.Between(strikeX, strikeY, this.activeMole.x, this.activeMole.y);
+      const targets = [];
+      if (this.activeMole) targets.push(this.activeMole);
+      if (this.activeRabbit) targets.push(this.rabbit);
+      const target = targets
+        .map(candidate => ({ candidate, distance: Phaser.Math.Distance.Between(strikeX, strikeY, candidate.x, candidate.y) }))
+        .filter(item => item.distance < 85)
+        .sort((first, second) => first.distance - second.distance)[0];
 
-      if (dist < 85) {
+      if (target) {
+        if (this.dwellTargetMole !== target.candidate) {
+          this.dwellTime = 0;
+          this.clearDwellRing();
+        }
         this.dwellTime += delta;
-        this.dwellTargetMole = this.activeMole;
+        this.dwellTargetMole = target.candidate;
 
         if (this.dwellTime >= 240) {
           // Ring completed: IMMEDIATELY wipe ring before triggering whack
@@ -846,7 +878,7 @@ class GameScene extends Phaser.Scene {
         } else {
           // Draw radial progress arc around mole
           const progress = Math.min(1.0, this.dwellTime / 240);
-          this.drawDwellRing(this.activeMole.x, this.activeMole.y, progress);
+          this.drawDwellRing(target.candidate.x, target.candidate.y, progress);
         }
       } else {
         if (this.dwellTime > 0) {
@@ -1040,8 +1072,8 @@ class GameScene extends Phaser.Scene {
     const hudContainer = this.add.container(0, 0).setDepth(20);
 
     // Background top bar
-    const barBg = this.add.rectangle(600, 36, 1160, 52, 0x1e272e, 0.95);
-    barBg.setStrokeStyle(4, 0x111111, 1);
+    const barBg = this.add.rectangle(600, 36, 1160, 52, 0x1e272e, 0.62);
+    barBg.setStrokeStyle(4, 0x111111, 0.6);
     hudContainer.add(barBg);
 
     if (this.gameMode === 'level') {
@@ -1347,7 +1379,13 @@ class GameScene extends Phaser.Scene {
       return;
     }
 
-    const randomIndex = Phaser.Math.Between(0, this.moles.length - 1);
+    const availableHoleIndexes = this.moles
+      .map((mole, index) => index)
+      .filter(index => !this.activeRabbit || index !== this.rabbitHoleIndex);
+
+    if (availableHoleIndexes.length === 0) return;
+
+    const randomIndex = Phaser.Utils.Array.GetRandom(availableHoleIndexes);
     const selectedMole = this.moles[randomIndex];
     const hole = this.holes[randomIndex];
 
@@ -1400,6 +1438,50 @@ class GameScene extends Phaser.Scene {
     });
   }
 
+  activateRandomRabbit() {
+    if (!this.rabbit || this.activeRabbit || this.gameOver || this.gameComplete || this.isPaused || this.isDeadZonePaused || this.isCountingDown) {
+      return;
+    }
+
+    const availableHoleIndexes = this.holes
+      .map((hole, index) => index)
+      .filter(index => this.moles[index] !== this.activeMole);
+
+    if (availableHoleIndexes.length === 0) return;
+
+    const holeIndex = Phaser.Utils.Array.GetRandom(availableHoleIndexes);
+    const hole = this.holes[holeIndex];
+    this.activeRabbit = true;
+    this.rabbitHoleIndex = holeIndex;
+    this.rabbit.x = hole.x;
+    this.rabbit.y = hole.y + 80;
+    this.rabbit.setVisible(true);
+
+    this.tweens.add({
+      targets: this.rabbit,
+      y: hole.y - 25, //rabbit position when dormant after popping up
+      duration: 250,
+      ease: 'Back.easeOut',
+      onComplete: () => {
+        this.time.delayedCall(2500, () => {
+          if (!this.rabbit || !this.activeRabbit) return;
+
+          this.tweens.add({
+            targets: this.rabbit,
+            y: hole.y + 80,
+            duration: 260,
+            ease: 'Back.easeIn',
+            onComplete: () => {
+              this.rabbit.setVisible(false);
+              this.activeRabbit = false;
+              this.rabbitHoleIndex = -1;
+            }
+          });
+        });
+      }
+    });
+  }
+
   deactivateMole(mole, wasWhacked = false) {
     // Immediately clear activeMole and dwell ring so it can never be retargeted while falling
     this.activeMole = null;
@@ -1437,11 +1519,23 @@ class GameScene extends Phaser.Scene {
   whackMole() {
     triggerWhackAnimation(this, this.cursor);
 
+    const strikeX = this.cursor.shadow.x;
+    const strikeY = this.cursor.shadow.y;
+
+    if (this.activeRabbit) {
+      const rabbitDist = Phaser.Math.Distance.Between(strikeX, strikeY, this.rabbit.x, this.rabbit.y);
+      if (rabbitDist < 85) {
+        this.rabbit.setTexture('crying-rabbit');
+        this.activeRabbit = false;
+        this.rabbitHoleIndex = -1;
+        this.handleRabbitWhacked();
+        return;
+      }
+    }
+
     const mole = this.activeMole;
     if (!mole) return;
 
-    const strikeX = this.cursor.shadow.x;
-    const strikeY = this.cursor.shadow.y;
     const dist = Phaser.Math.Distance.Between(strikeX, strikeY, mole.x, mole.y);
 
     if (dist < 85) {
@@ -1478,7 +1572,26 @@ class GameScene extends Phaser.Scene {
     }
   }
 
-  handleLevelLostLives() {
+  handleRabbitWhacked() {
+    //this.missedMoles++;
+    this.updateHUD();
+    this.canWhack = false;
+
+    if (this.rabbitTimerEvent) this.rabbitTimerEvent.remove();
+    if (this.levelTimerEvent) this.levelTimerEvent.remove();
+    if (this.timerTween) this.timerTween.stop();
+    this.timerBar.container.setVisible(false);
+
+    this.time.delayedCall(500, () => {
+      if (this.gameMode === 'level') {
+        this.handleLevelLostLives('RABBIT WHACKED');
+      } else {
+        this.handleEndlessGameOver('RABBIT WHACKED');
+      }
+    });
+  }
+
+  handleLevelLostLives(reason = 'ALL 3 LIVES LOST') {
     this.gameOver = true;
     this.canWhack = false;
     if (this.levelTimerEvent) this.levelTimerEvent.remove();
@@ -1506,7 +1619,7 @@ class GameScene extends Phaser.Scene {
     }).setOrigin(0.5);
 
     const stats = this.add.text(0, -5,
-      `LEVEL: ${this.levelConfig.name.toUpperCase()}\nSCORE: ${this.score} / TARGET: ${this.levelConfig.targetScore}\nTIME LEFT: ${this.levelTimeLeft}s\n\nALL 3 LIVES LOST`, {
+      `LEVEL: ${this.levelConfig.name.toUpperCase()}\nSCORE: ${this.score} / TARGET: ${this.levelConfig.targetScore}\nTIME LEFT: ${this.levelTimeLeft}s\n\n${reason}`, {
       fontFamily: PIXEL_FONT,
       fontSize: '19px',
       fontStyle: 'bold',
@@ -1691,7 +1804,7 @@ class GameScene extends Phaser.Scene {
     }
   }
 
-  handleEndlessGameOver() {
+  handleEndlessGameOver(reason = null) {
     this.gameOver = true;
     this.canWhack = false;
     if (this.timerTween) this.timerTween.stop();
@@ -1729,7 +1842,7 @@ class GameScene extends Phaser.Scene {
       strokeThickness: 3
     }).setOrigin(0.5);
 
-    const highTxt = this.add.text(0, 15, isNewHigh ? '🏆 NEW HIGH SCORE!' : `ENDLESS BEST: ${progress.endlessHighScore}`, {
+    const highTxt = this.add.text(0, 15, reason || (isNewHigh ? '🏆 NEW HIGH SCORE!' : `ENDLESS BEST: ${progress.endlessHighScore}`), {
       fontFamily: PIXEL_FONT,
       fontSize: '20px',
       fontStyle: 'bold',
