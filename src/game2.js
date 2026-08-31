@@ -1440,13 +1440,31 @@ class GameScene extends Phaser.Scene {
 
        this.timerBar.bar.setFillStyle(colour);
      }
+    // Shake mole during the final 0.7 seconds
+     if (tween.progress >= 0.77 && !selectedMole.isShaking) {
+       selectedMole.isShaking = true;
+
+       this.tweens.add({
+         targets: selectedMole,
+         x: hole.x + 8,
+         duration: 60,
+         yoyo: true,
+         repeat: -1,
+         ease: 'Sine.easeInOut'
+       });
+     }
     },
 
     onComplete: () => {
       this.timerTween = null;
 
+      // Stop mole shaking
+      this.tweens.killTweensOf(selectedMole);
+      selectedMole.x = hole.x;
+      selectedMole.isShaking = false;  
+
       // Reset timer colour for the next mole
-     this.timerBar.bar.setFillStyle(0x55cc55);
+      this.timerBar.bar.setFillStyle(0x55cc55);
 
      if (
         this.activeMole === selectedMole &&
