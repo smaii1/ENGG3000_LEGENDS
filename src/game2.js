@@ -1407,28 +1407,67 @@ class GameScene extends Phaser.Scene {
     this.timerBar.container.y = hole.y - 60;
 
     this.timerTween = this.tweens.add({
-      targets: this.timerBar.bar,
-      width: 0,
-      duration: moleDuration,
-      ease: 'Linear',
-      onComplete: () => {
-        this.timerTween = null;
-        if (this.activeMole === selectedMole && !this.gameOver && !this.gameComplete) {
-          selectedMole.setTexture('missed-mole');
-          this.missedMoles++;
-          this.updateHUD();
-          this.deactivateMole(selectedMole, false);
+    targets: this.timerBar.bar,
+    width: 0 ,
+    duration: moleDuration,
+    ease: 'Linear',
 
-          if (this.missedMoles >= this.maxMissedMoles) {
-            if (this.gameMode === 'level') {
-              this.handleLevelLostLives();
-            } else {
-              this.handleEndlessGameOver();
-            }
+    onUpdate: (tween) => {
+      // Get the percentage of time that has passed
+      const progress = tween.progress;
+
+      // GREEN -> YELLOW during the first half
+      if (progress < 0.5) {
+        const colourProgress = progress / 0.5;
+
+        const red = Math.round(85 + (255 - 85) * colourProgress);
+        const green = 204;
+        const blue = Math.round(85 - (85 * colourProgress));
+
+        const colour = (red << 16) | (green << 8) | blue;
+
+        this.timerBar.bar.setFillStyle(colour);
+
+      // YELLOW -> RED during the second half
+      } else {
+        const colourProgress = (progress - 0.5) / 0.5;
+
+       const red = 255;
+      const green = Math.round(204 - (204 * colourProgress));
+       const blue = 0;
+
+       const colour = (red << 16) | (green << 8) | blue;
+
+       this.timerBar.bar.setFillStyle(colour);
+     }
+    },
+
+    onComplete: () => {
+      this.timerTween = null;
+
+      // Reset timer colour for the next mole
+     this.timerBar.bar.setFillStyle(0x55cc55);
+
+     if (
+        this.activeMole === selectedMole &&
+        !this.gameOver &&
+       !this.gameComplete
+     ) {
+       selectedMole.setTexture('missed-mole');
+       this.missedMoles++;
+       this.updateHUD();
+        this.deactivateMole(selectedMole, false);
+
+        if (this.missedMoles >= this.maxMissedMoles) {
+         if (this.gameMode === 'level') {
+           this.handleLevelLostLives();
+         } else {
+            this.handleEndlessGameOver();
           }
-        }
-      }
-    });
+       }
+     }
+    }
+  });
 
     this.tweens.add({
       targets: selectedMole,
