@@ -5,8 +5,10 @@
 
 class ESPTrackerService {
   constructor() {
-    this.host = localStorage.getItem('esp_tracker_host') || '192.168.4.1';
-    this.port = parseInt(localStorage.getItem('esp_tracker_port') || '81', 10);
+    const isLocal = typeof window !== 'undefined' && window.location &&
+      (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+    this.host = localStorage.getItem('esp_tracker_host') || (isLocal ? 'localhost' : '192.168.4.1');
+    this.port = parseInt(localStorage.getItem('esp_tracker_port') || (isLocal ? '8081' : '81'), 10);
     this.ws = null;
     this.isConnected = false;
     this.isConnecting = false;
@@ -17,6 +19,10 @@ class ESPTrackerService {
     // Screen dimensions
     this.screenWidth = 1200;
     this.screenHeight = 800;
+
+    // Dynamic targets cache for ESP32 Aim-Assist (holes & UI buttons)
+    this.currentTargets = [];
+    this.lastScreenTargets = [];
 
     // Live tracking telemetry
     this.raw = {
@@ -39,9 +45,9 @@ class ESPTrackerService {
     this.targetScreenPos = { x: 600, y: 400 };
 
     this.inDeadZone = false;
-    this.deadZoneOffsetY = 30.0; // Distance in cm from ESP ultrasonics considered behind red zone line
-    this.minYCm = 30.0; // Front boundary of play area (>30cm is top of screen)
-    this.maxYCm = 170.0; // Back boundary of play area (30cm offset + 140cm play depth)
+    this.deadZoneOffsetY = 60.0; // Distance in cm from ESP ultrasonics considered behind red zone line (default 60cm)
+    this.minYCm = 60.0; // Front boundary of play area (>60cm is top of screen)
+    this.maxYCm = 200.0; // Back boundary of play area (60cm offset + 140cm play depth)
     this.lastTrackingTime = Date.now();
     this.trackingLost = false;
 
@@ -50,7 +56,10 @@ class ESPTrackerService {
       position: [],
       deadzone: [],
       connection: [],
-      tracking: []
+      tracking: [],
+      targetsUpdated: [],
+      mirrorChange: [],
+      modeChange: []
     };
 
     // Web Audio API context for warning buzzer
@@ -88,6 +97,11 @@ class ESPTrackerService {
         if (this.reconnectTimer) {
           clearTimeout(this.reconnectTimer);
           this.reconnectTimer = null;
+        }
+
+        // Resend active targets immediately upon connecting
+        if (this.currentTargets && this.currentTargets.length > 0) {
+          this.send({ cmd: 'targets', pts: this.currentTargets });
         }
       };
 
@@ -169,6 +183,119 @@ class ESPTrackerService {
   setMirrorX(mirror) {
     this.mirrorX = Boolean(mirror);
     localStorage.setItem('esp_tracker_mirror_x', this.mirrorX);
+    this.emit('mirrorChange', { mirrorX: this.mirrorX });
+
+    // Re-evaluate target coordinates with updated mirror setting
+    if (this.lastScreenTargets && this.lastScreenTargets.length > 0) {
+      this.sendTargets(this.lastScreenTargets);
+    }
+  }
+
+  // ----------------------------------------------------
+  // Coordinate Mapping: Play Area [0.0, 1.0] <-> Screen (1200x800)
+  // ----------------------------------------------------
+  normToScreen(normX, normY) {
+    const clampedNormX = Math.max(0.0, Math.min(1.0, normX));
+    const clampedNormY = Math.max(0.0, Math.min(1.0, normY));
+
+    // Mirror X if requested (player facing screen)
+    const effectiveNormX = this.mirrorX ? (1.0 - clampedNormX) : clampedNormX;
+
+    // Map to active screen area (2% to 98% horizontally, 5% to 95% vertically)
+    const screenX = (0.02 + effectiveNormX * 0.96) * this.screenWidth;
+    const screenY = (0.05 + clampedNormY * 0.90) * this.screenHeight;
+
+    return { x: screenX, y: screenY };
+  }
+
+  screenToNorm(screenX, screenY) {
+    // Inverse horizontal mapping:
+    let effectiveNormX = ((screenX / this.screenWidth) - 0.02) / 0.96;
+    effectiveNormX = Math.max(0.0, Math.min(1.0, effectiveNormX));
+
+    // Flip back if mirrored
+    const normX = this.mirrorX ? (1.0 - effectiveNormX) : effectiveNormX;
+
+    // Inverse vertical mapping:
+    let normY = ((screenY / this.screenHeight) - 0.05) / 0.90;
+    normY = Math.max(0.0, Math.min(1.0, normY));
+
+    return {
+      x: parseFloat(Math.max(0.0, Math.min(1.0, normX)).toFixed(4)),
+      y: parseFloat(Math.max(0.0, Math.min(1.0, normY)).toFixed(4))
+    };
+  }
+
+  // ----------------------------------------------------
+  // Dynamic Aim Assist Target Synchronization
+  // ----------------------------------------------------
+  send(payload) {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      try {
+        const msg = typeof payload === 'string' ? payload : JSON.stringify(payload);
+        this.ws.send(msg);
+        return true;
+      } catch (err) {
+        console.warn('[ESPTracker] WebSocket send failed:', err);
+      }
+    }
+    return false;
+  }
+
+  sendTargets(targets = []) {
+    this.lastScreenTargets = Array.isArray(targets) ? [...targets] : [];
+
+    // Max 16 targets supported by ESP32 firmware (TARGET_MAX_COUNT)
+    const sliced = this.lastScreenTargets.slice(0, 16);
+
+    this.currentTargets = sliced.map(tgt => {
+      let nx = tgt.x;
+      let ny = tgt.y;
+      let nr = tgt.r !== undefined ? tgt.r : 0.08;
+
+      // If screen coordinates, convert to normalized play area [0, 1]
+      if (nx > 1.0 || ny > 1.0) {
+        const norm = this.screenToNorm(nx, ny);
+        nx = norm.x;
+        ny = norm.y;
+      }
+
+      // If pixel radius, normalize relative to average screen dimension
+      if (nr > 1.0) {
+        nr = parseFloat((nr / 1000.0).toFixed(4));
+      }
+
+      const pt = {
+        x: parseFloat(Math.max(0.0, Math.min(1.0, nx)).toFixed(4)),
+        y: parseFloat(Math.max(0.0, Math.min(1.0, ny)).toFixed(4)),
+        r: parseFloat(Math.max(0.02, Math.min(0.30, nr)).toFixed(4)),
+        t: tgt.t !== undefined ? tgt.t : 0
+      };
+
+      if (tgt.s !== undefined && tgt.s >= 0) {
+        pt.s = parseFloat(tgt.s.toFixed(2));
+      }
+      if (tgt.label) {
+        pt.label = String(tgt.label);
+      }
+
+      return pt;
+    });
+
+    const payload = {
+      cmd: 'targets',
+      pts: this.currentTargets
+    };
+
+    this.send(payload);
+    this.emit('targetsUpdated', { targets: this.currentTargets });
+  }
+
+  clearTargets() {
+    this.lastScreenTargets = [];
+    this.currentTargets = [];
+    this.send({ cmd: 'clearTargets' });
+    this.emit('targetsUpdated', { targets: [] });
   }
 
   // ----------------------------------------------------
@@ -182,9 +309,13 @@ class ESPTrackerService {
         this.raw.yCm = data.y !== undefined ? data.y : this.raw.yCm;
         this.raw.confidence = data.c !== undefined ? data.c : 1.0;
         this.raw.isDetected = Boolean(data.det);
-        
+
+        if (data.dz_th !== undefined) {
+          this.deadZoneOffsetY = data.dz_th;
+        }
+
         // Offset proximity calculation:
-        // Ultrasonics are mounted behind the red line. Any detected player with y < 30 cm is across the line.
+        // Ultrasonics are mounted behind the red line. Any detected player with y < deadZone is across the line.
         const isOffsetDeadZone = this.raw.isDetected && (this.raw.yCm < this.deadZoneOffsetY);
         this.raw.inDeadZone = Boolean(data.dz) || isOffsetDeadZone;
         this.raw.secOnline = Boolean(data.so);
@@ -194,17 +325,18 @@ class ESPTrackerService {
         this.raw.distRO = data.ro || 0;
         this.raw.timestamp = Date.now();
 
-        // Calculate normalized X & Y coordinates:
-        // For Y, map [minYCm (30cm), maxYCm (170cm)] so >30cm starts at top of screen (0.0)
-        if (data.y !== undefined) {
-          const normYRange = this.maxYCm - this.minYCm;
-          this.raw.normY = normYRange > 0 ? (this.raw.yCm - this.minYCm) / normYRange : 0.5;
-        } else if (data.ny !== undefined) {
-          this.raw.normY = data.ny;
-        }
-
+        // Prioritize normalized coordinates directly from ESP32 / Simulator Kalman filter
         if (data.nx !== undefined) {
           this.raw.normX = data.nx;
+        } else if (data.x !== undefined) {
+          this.raw.normX = Math.max(0.0, Math.min(1.0, data.x / 150.0));
+        }
+
+        if (data.ny !== undefined) {
+          this.raw.normY = data.ny;
+        } else if (data.y !== undefined) {
+          const normYRange = this.maxYCm - this.minYCm;
+          this.raw.normY = normYRange > 0 ? Math.max(0.0, Math.min(1.0, (this.raw.yCm - this.minYCm) / normYRange)) : 0.5;
         }
 
         this.lastTrackingTime = Date.now();
@@ -215,16 +347,10 @@ class ESPTrackerService {
             this.emit('tracking', { detected: true });
           }
 
-          // Map normalized coords (0.0 - 1.0) to Screen Pixels (1200x800)
-          let mappedX = this.mirrorX ? (1.0 - this.raw.normX) : this.raw.normX;
-          mappedX = Math.max(0.02, Math.min(0.98, mappedX)) * this.screenWidth;
-
-          // Invert or scale Y: normY=0 (>30cm) is top of screen, normY=1 is bottom of screen
-          let clampedNormY = Math.max(0.0, Math.min(1.0, this.raw.normY));
-          let mappedY = (0.05 + clampedNormY * 0.90) * this.screenHeight;
-
-          this.targetScreenPos.x = mappedX;
-          this.targetScreenPos.y = mappedY;
+          // Map normalized coords (0.0 - 1.0) to Screen Pixels (1200x800) using unified mapping
+          const screenPos = this.normToScreen(this.raw.normX, this.raw.normY);
+          this.targetScreenPos.x = screenPos.x;
+          this.targetScreenPos.y = screenPos.y;
         }
 
         // Dead-zone state transition check

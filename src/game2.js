@@ -398,6 +398,126 @@ function processSceneButtonDwell(scene, delta) {
 }
 
 // ----------------------------------------------------
+// Target Synchronization Helper for ESP32 Aim-Assist
+// ----------------------------------------------------
+function syncSceneTargets(scene) {
+  if (!window.espTracker || typeof window.espTracker.sendTargets !== 'function') return;
+  if (!scene) {
+    window.espTracker.clearTargets();
+    return;
+  }
+
+  const targets = [];
+  const sceneKey = scene.scene ? scene.scene.key : (scene.constructor ? scene.constructor.name : '');
+
+  if (sceneKey === 'MenuScene') {
+    // Collect active menu buttons
+    if (scene.registeredButtons) {
+      scene.registeredButtons.forEach(btn => {
+        if (btn.isDisabled || (btn.container && !btn.container.visible)) return;
+        targets.push({
+          x: btn.x,
+          y: btn.y,
+          r: Math.max(btn.width, btn.height) * 0.45,
+          t: 1, // TARGET_TYPE_BUTTON
+          label: (btn.label && btn.label.text) ? btn.label.text : 'Button'
+        });
+      });
+    }
+  } else if (sceneKey === 'LevelSelectScene') {
+    // Collect unlocked level cards & back button
+    if (scene.registeredButtons) {
+      scene.registeredButtons.forEach(btn => {
+        if (btn.isDisabled || (btn.container && !btn.container.visible)) return;
+        targets.push({
+          x: btn.x,
+          y: btn.y,
+          r: Math.max(btn.width, btn.height) * 0.35,
+          t: 1, // TARGET_TYPE_BUTTON
+          label: (btn.label && btn.label.text) ? btn.label.text : 'LevelCard'
+        });
+      });
+    }
+  } else if (sceneKey === 'GameScene') {
+    if (scene.isPaused) {
+      // While paused, only pause modal buttons are active targets
+      if (scene.registeredButtons) {
+        scene.registeredButtons.forEach(btn => {
+          if (btn.isDisabled || (btn.container && !btn.container.visible)) return;
+          const isPauseBtn = scene.pauseModalContainer && scene.pauseModalContainer.buttons &&
+            scene.pauseModalContainer.buttons.some(b => b.btnData === btn);
+          if (isPauseBtn || (btn.container && btn.container.depth >= 60)) {
+            targets.push({
+              x: btn.x,
+              y: btn.y,
+              r: Math.max(btn.width, btn.height) * 0.45,
+              t: 1, // TARGET_TYPE_BUTTON
+              label: (btn.label && btn.label.text) ? btn.label.text : 'PauseBtn'
+            });
+          }
+        });
+      }
+    } else if (scene.gameOver || scene.gameComplete) {
+      // Game Over or Victory: only overlay action buttons
+      if (scene.registeredButtons) {
+        scene.registeredButtons.forEach(btn => {
+          if (btn.isDisabled || (btn.container && !btn.container.visible)) return;
+          if (btn.container && btn.container.depth >= 50) {
+            targets.push({
+              x: btn.x,
+              y: btn.y,
+              r: Math.max(btn.width, btn.height) * 0.45,
+              t: 1, // TARGET_TYPE_BUTTON
+              label: (btn.label && btn.label.text) ? btn.label.text : 'OverlayBtn'
+            });
+          }
+        });
+      }
+    } else {
+      // Active Gameplay: Mole holes + HUD pause button
+      // 1. Mole Holes (Target type 0 = TARGET_TYPE_HOLE)
+      if (scene.holes && scene.holes.length > 0) {
+        scene.holes.forEach((hole, idx) => {
+          targets.push({
+            x: hole.x,
+            y: hole.y,
+            r: 85, // Strike radius in screen pixels (~0.085 normalized)
+            t: 0,  // TARGET_TYPE_HOLE
+            label: `Hole ${idx + 1}`
+          });
+        });
+      }
+
+      // 2. HUD interactive buttons (e.g. Pause badge at top right)
+      if (scene.registeredButtons) {
+        scene.registeredButtons.forEach(btn => {
+          if (btn.isDisabled || (btn.container && !btn.container.visible)) return;
+          if (!btn.container || btn.container.depth < 50) {
+            targets.push({
+              x: btn.x,
+              y: btn.y,
+              r: Math.max(btn.width, btn.height) * 0.5,
+              t: 1, // TARGET_TYPE_BUTTON
+              label: (btn.label && btn.label.text) ? btn.label.text : 'HUD'
+            });
+          }
+        });
+      }
+    }
+  }
+
+  // Attach updateTargets method on scene for runtime modifications
+  scene.updateTargets = () => syncSceneTargets(scene);
+
+  // Send targets (espTracker will normalize coordinates and transmit via WebSocket)
+  if (targets.length > 0) {
+    window.espTracker.sendTargets(targets);
+  } else {
+    window.espTracker.clearTargets();
+  }
+}
+
+// ----------------------------------------------------
 // Boot Scene - Asset Loading
 // ----------------------------------------------------
 class BootScene extends Phaser.Scene {
@@ -500,8 +620,16 @@ class MenuScene extends Phaser.Scene {
 
     this.modeChangeCb = () => updateMenuModeBtn();
     window.espTracker.on('modeChange', this.modeChangeCb);
+
+    this.mirrorChangeCb = () => syncSceneTargets(this);
+    if (window.espTracker) {
+      window.espTracker.on('mirrorChange', this.mirrorChangeCb);
+    }
+
     this.events.on('shutdown', () => {
-      if (this.modeChangeCb) window.espTracker.off('modeChange', this.modeChangeCb);
+      if (this.modeChangeCb && window.espTracker) window.espTracker.off('modeChange', this.modeChangeCb);
+      if (this.mirrorChangeCb && window.espTracker) window.espTracker.off('mirrorChange', this.mirrorChangeCb);
+      if (window.espTracker) window.espTracker.clearTargets();
     });
 
     // Tracker Status Hint Bar at bottom
@@ -523,6 +651,9 @@ class MenuScene extends Phaser.Scene {
     this.input.on('pointerdown', () => {
       triggerWhackAnimation(this, this.cursor);
     });
+
+    // Synchronize MenuScene UI button targets to ESP32 / Simulator
+    syncSceneTargets(this);
   }
 
   update(time, delta) {
@@ -700,6 +831,18 @@ class LevelSelectScene extends Phaser.Scene {
     this.input.on('pointerdown', () => {
       triggerWhackAnimation(this, this.cursor);
     });
+
+    this.mirrorChangeCb = () => syncSceneTargets(this);
+    if (window.espTracker) {
+      window.espTracker.on('mirrorChange', this.mirrorChangeCb);
+    }
+    this.events.on('shutdown', () => {
+      if (this.mirrorChangeCb && window.espTracker) window.espTracker.off('mirrorChange', this.mirrorChangeCb);
+      if (window.espTracker) window.espTracker.clearTargets();
+    });
+
+    // Synchronize LevelSelectScene card & back button targets
+    syncSceneTargets(this);
   }
 
   update(time, delta) {
@@ -843,6 +986,18 @@ class GameScene extends Phaser.Scene {
       delay: 10000,
       loop: true,
       callback: () => this.activateRandomRabbit()
+    });
+
+    // Synchronize GameScene targets (mole holes & HUD pause button) to ESP32 / Simulator
+    syncSceneTargets(this);
+
+    this.mirrorChangeCb = () => syncSceneTargets(this);
+    if (window.espTracker) {
+      window.espTracker.on('mirrorChange', this.mirrorChangeCb);
+    }
+    this.events.on('shutdown', () => {
+      if (this.mirrorChangeCb && window.espTracker) window.espTracker.off('mirrorChange', this.mirrorChangeCb);
+      if (window.espTracker) window.espTracker.clearTargets();
     });
   }
 
@@ -1367,6 +1522,9 @@ class GameScene extends Phaser.Scene {
     }, { bgColor: 0x7f8c8d, hoverColor: 0x95a5a6, borderColor: 0x333333, depth: 65 });
 
     this.pauseModalContainer.buttons = [modeBtn, mirrorBtn, resumeBtn, restartBtn, exitBtn];
+
+    // Synchronize pause menu button targets to ESP32 / Simulator
+    syncSceneTargets(this);
   }
 
   resumeGame() {
@@ -1394,6 +1552,9 @@ class GameScene extends Phaser.Scene {
       this.pauseModalContainer.destroy();
       this.pauseModalContainer = null;
     }
+
+    // Restore gameplay targets (mole holes & HUD pause button) to ESP32 / Simulator
+    syncSceneTargets(this);
   }
 
   getMoleDuration() {
@@ -1733,6 +1894,9 @@ class GameScene extends Phaser.Scene {
     createPixelButton(this, 600 + 130, 400 + 135, 180, 52, 'LEVEL SELECT ☰', () => {
       this.scene.start('LevelSelectScene');
     }, { bgColor: 0x7f8c8d, hoverColor: 0x95a5a6, borderColor: 0x333333, fontSize: '17px', depth: 60 });
+
+    // Update targets to Game Over buttons
+    syncSceneTargets(this);
   }
 
   handleLevelTimeUp() {
@@ -1895,6 +2059,9 @@ class GameScene extends Phaser.Scene {
         this.scene.start('LevelSelectScene');
       }, { bgColor: 0x7f8c8d, hoverColor: 0x95a5a6, borderColor: 0x333333, fontSize: '17px', depth: 60 });
     }
+
+    // Update targets to Level Complete / Victory buttons
+    syncSceneTargets(this);
   }
 
   handleEndlessGameOver(reason = null) {
@@ -1954,6 +2121,9 @@ class GameScene extends Phaser.Scene {
     createPixelButton(this, 600 + 120, 400 + 110, 190, 55, 'MAIN MENU ☰', () => {
       this.scene.start('MenuScene');
     }, { bgColor: 0x7f8c8d, hoverColor: 0x95a5a6, borderColor: 0x333333, fontSize: '17px', depth: 60 });
+
+    // Update targets to Endless Game Over buttons
+    syncSceneTargets(this);
   }
 }
 
