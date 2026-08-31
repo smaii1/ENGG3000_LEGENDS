@@ -228,9 +228,29 @@ function triggerWhackAnimation(scene, cursorObj) {
 }
 
 function renderBackground(scene, levelConfig = null) {
-  const backgroundKey = levelConfig && levelConfig.level === 2
-    ? 'vegetable-patch'
-    : 'backyard';
+  let backgroundKey = 'backyard'; // default
+  
+  if (levelConfig) {
+    switch (levelConfig.level) {
+      case 1:
+        backgroundKey = 'backyard';
+        break;
+      case 2:
+        backgroundKey = 'vegetable-patch';
+        break;
+      case 3:
+        backgroundKey = 'grassy-meadow';
+        break;
+      case 4:
+      case 5:
+      case 6:
+        backgroundKey = 'backyard'; // placeholder until othr background art has been created
+        break;
+      default:
+        backgroundKey = 'backyard';
+    }
+  }
+  
   const bg = scene.add.image(0, 0, backgroundKey).setOrigin(0, 0);
   bg.setDisplaySize(1200, 800);
   bg.setDepth(0);
@@ -388,6 +408,7 @@ class BootScene extends Phaser.Scene {
   preload() {
     this.load.image('backyard', 'assets/backyard.png');
     this.load.image('vegetable-patch', 'assets/vegetable-patch.png');
+    this.load.image('grassy-meadow', 'assets/grassy-meadow.png');
     this.load.image('hole', 'assets/hole.png');
     this.load.image('hammer', 'assets/hammer1.png');
     this.load.image('mole', 'assets/mole.png');
