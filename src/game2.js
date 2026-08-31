@@ -2,8 +2,8 @@
 // Level Definitions & Configurations
 // ----------------------------------------------------
 const LEVEL_CONFIGS = [
-  { level: 1, name: "Level 1: Backyard", targetScore: 10, moleTime: 3400, spawnDelay: 900, holes: 2 },
-  { level: 2, name: "Level 2: Vegetable Patch", targetScore: 14, moleTime: 2800, spawnDelay: 800, holes: 3 },
+  { level: 1, name: "Level 1: Backyard", targetScore: 10, moleTime: 6400, spawnDelay: 900, holes: 2 },
+  { level: 2, name: "Level 2: Vegetable Patch", targetScore: 14, moleTime: 5800, spawnDelay: 800, holes: 3 },
   { level: 3, name: "Level 3: Grassy Meadow", targetScore: 18, moleTime: 2300, spawnDelay: 700, holes: 4 },
   { level: 4, name: "Level 4: Deep Woods", targetScore: 22, moleTime: 1900, spawnDelay: 600, holes: 6 },
   { level: 5, name: "Level 5: Mole Fortress", targetScore: 26, moleTime: 1550, spawnDelay: 500, holes: 6 },
@@ -960,7 +960,7 @@ class GameScene extends Phaser.Scene {
     const bannerBg = this.add.rectangle(0, 0, 860, 160, 0x111111, 0.95);
     bannerBg.setStrokeStyle(5, 0xe74c3c, 1);
 
-    const iconTxt = this.add.text(0, -45, '⚠️ DEAD ZONE ACTIVE (< 60CM FROM SCREEN) ⚠️', {
+    const iconTxt = this.add.text(0, -45, '⚠️ STAND BACK! ⚠️', {
       fontFamily: PIXEL_FONT,
       fontSize: '26px',
       fontStyle: 'bold',
@@ -1073,7 +1073,15 @@ class GameScene extends Phaser.Scene {
 
           // Resume game timers & mole tweens
           if (this.levelTimerEvent && !this.isPaused) this.levelTimerEvent.paused = false;
-          if (this.timerTween && !this.isPaused) this.timerTween.resume();
+          if (this.timerTween && !this.isPaused) {
+            this.timerTween.resume();
+          }
+
+          // If no active mole is present, restart the mole spawn sequence
+          if (!this.activeMole && !this.isPaused && !this.gameOver && !this.gameComplete) {
+            const spawnDelay = this.getMoleSpawnDelay();
+            this.time.delayedCall(spawnDelay, () => this.activateRandomMole());
+          }
         }
       }
     });
@@ -1364,7 +1372,14 @@ class GameScene extends Phaser.Scene {
   resumeGame() {
     this.isPaused = false;
     if (this.levelTimerEvent && !this.isDeadZonePaused && !this.isCountingDown) this.levelTimerEvent.paused = false;
-    if (this.timerTween && !this.isDeadZonePaused && !this.isCountingDown) this.timerTween.resume();
+    if (this.timerTween && !this.isDeadZonePaused && !this.isCountingDown) {
+      this.timerTween.resume();
+    }
+
+    if (!this.activeMole && !this.isDeadZonePaused && !this.isCountingDown && !this.gameOver && !this.gameComplete) {
+      const spawnDelay = this.getMoleSpawnDelay();
+      this.time.delayedCall(spawnDelay, () => this.activateRandomMole());
+    }
 
     if (this.pauseModalContainer) {
       if (this.pauseModalContainer.buttons) {

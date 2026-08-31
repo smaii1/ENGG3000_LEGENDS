@@ -39,6 +39,9 @@ class ESPTrackerService {
     this.targetScreenPos = { x: 600, y: 400 };
 
     this.inDeadZone = false;
+    this.deadZoneOffsetY = 30.0; // Distance in cm from ESP ultrasonics considered behind red zone line
+    this.minYCm = 30.0; // Front boundary of play area (>30cm is top of screen)
+    this.maxYCm = 170.0; // Back boundary of play area (30cm offset + 140cm play depth)
     this.lastTrackingTime = Date.now();
     this.trackingLost = false;
 
@@ -101,6 +104,12 @@ class ESPTrackerService {
         const wasConnected = this.isConnected;
         this.isConnected = false;
         this.isConnecting = false;
+        if (this.inDeadZone) {
+          this.inDeadZone = false;
+          this.raw.inDeadZone = false;
+          this.stopDeadZoneBuzzer();
+          this.emit('deadzone', { inDeadZone: false });
+        }
         if (wasConnected) {
           console.warn('[ESPTracker] WebSocket connection lost. Reconnecting in 2s...');
         }
@@ -137,6 +146,12 @@ class ESPTrackerService {
     this.mode = newMode === 'mouse' ? 'mouse' : 'esp';
     localStorage.setItem('esp_tracker_mode', this.mode);
     console.log(`[ESPTracker] Mode switched to: ${this.mode}`);
+    if (this.mode === 'mouse' && this.inDeadZone) {
+      this.inDeadZone = false;
+      this.raw.inDeadZone = false;
+      this.stopDeadZoneBuzzer();
+      this.emit('deadzone', { inDeadZone: false });
+    }
     this.emit('modeChange', { mode: this.mode });
     this.emit('connection', { status: this.isConnected ? 'CONNECTED' : 'DISCONNECTED', mode: this.mode });
   }
@@ -165,17 +180,32 @@ class ESPTrackerService {
       if (data.type === 'pos') {
         this.raw.xCm = data.x !== undefined ? data.x : this.raw.xCm;
         this.raw.yCm = data.y !== undefined ? data.y : this.raw.yCm;
-        this.raw.normX = data.nx !== undefined ? data.nx : this.raw.normX;
-        this.raw.normY = data.ny !== undefined ? data.ny : this.raw.normY;
         this.raw.confidence = data.c !== undefined ? data.c : 1.0;
         this.raw.isDetected = Boolean(data.det);
-        this.raw.inDeadZone = Boolean(data.dz);
+        
+        // Offset proximity calculation:
+        // Ultrasonics are mounted behind the red line. Any detected player with y < 30 cm is across the line.
+        const isOffsetDeadZone = this.raw.isDetected && (this.raw.yCm < this.deadZoneOffsetY);
+        this.raw.inDeadZone = Boolean(data.dz) || isOffsetDeadZone;
         this.raw.secOnline = Boolean(data.so);
         this.raw.distLO = data.lo || 0;
         this.raw.distLI = data.li || 0;
         this.raw.distRI = data.ri || 0;
         this.raw.distRO = data.ro || 0;
         this.raw.timestamp = Date.now();
+
+        // Calculate normalized X & Y coordinates:
+        // For Y, map [minYCm (30cm), maxYCm (170cm)] so >30cm starts at top of screen (0.0)
+        if (data.y !== undefined) {
+          const normYRange = this.maxYCm - this.minYCm;
+          this.raw.normY = normYRange > 0 ? (this.raw.yCm - this.minYCm) / normYRange : 0.5;
+        } else if (data.ny !== undefined) {
+          this.raw.normY = data.ny;
+        }
+
+        if (data.nx !== undefined) {
+          this.raw.normX = data.nx;
+        }
 
         this.lastTrackingTime = Date.now();
 
@@ -189,8 +219,9 @@ class ESPTrackerService {
           let mappedX = this.mirrorX ? (1.0 - this.raw.normX) : this.raw.normX;
           mappedX = Math.max(0.02, Math.min(0.98, mappedX)) * this.screenWidth;
 
-          // Invert or scale Y: ny=0 is front (top of playing area), ny=1 is back (bottom)
-          let mappedY = Math.max(0.05, Math.min(0.95, this.raw.normY)) * this.screenHeight;
+          // Invert or scale Y: normY=0 (>30cm) is top of screen, normY=1 is bottom of screen
+          let clampedNormY = Math.max(0.0, Math.min(1.0, this.raw.normY));
+          let mappedY = (0.05 + clampedNormY * 0.90) * this.screenHeight;
 
           this.targetScreenPos.x = mappedX;
           this.targetScreenPos.y = mappedY;
@@ -237,6 +268,12 @@ class ESPTrackerService {
       if (!this.trackingLost) {
         this.trackingLost = true;
         this.emit('tracking', { detected: false });
+        if (this.inDeadZone) {
+          this.inDeadZone = false;
+          this.raw.inDeadZone = false;
+          this.stopDeadZoneBuzzer();
+          this.emit('deadzone', { inDeadZone: false });
+        }
       }
     }
   }
