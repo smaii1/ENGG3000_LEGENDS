@@ -1727,6 +1727,7 @@ class GameScene extends Phaser.Scene {
             ease: 'Back.easeIn',
             onComplete: () => {
               this.rabbit.setVisible(false);
+              this.score += 3; // score ++ 3 if rabbit is not whacked
               this.activeRabbit = false;
               this.rabbitHoleIndex = -1;
             }
@@ -1753,6 +1754,10 @@ class GameScene extends Phaser.Scene {
     if (index === -1) return;
 
     const hole = this.holes[index];
+    //stop mole shake
+    this.tweens.killTweensOf(mole);
+    mole.x = hole.x;
+    mole.isShaking = false;
 
     this.tweens.add({
       targets: mole,
