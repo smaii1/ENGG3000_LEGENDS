@@ -4,10 +4,10 @@
 const LEVEL_CONFIGS = [
   { level: 1, name: "Level 1: Backyard", targetScore: 10, moleTime: 6400, spawnDelay: 900, holes: 2 },
   { level: 2, name: "Level 2: Vegetable Patch", targetScore: 14, moleTime: 5800, spawnDelay: 800, holes: 3 },
-  { level: 3, name: "Level 3: Grassy Meadow", targetScore: 18, moleTime: 2300, spawnDelay: 700, holes: 4 },
-  { level: 4, name: "Level 4: Deep Woods", targetScore: 22, moleTime: 1900, spawnDelay: 600, holes: 6 },
-  { level: 5, name: "Level 5: Mole Fortress", targetScore: 26, moleTime: 1550, spawnDelay: 500, holes: 6 },
-  { level: 6, name: "Level 6: Whack Master", targetScore: 30, moleTime: 1250, spawnDelay: 400, holes: 6 }
+  { level: 3, name: "Level 3: Grassy Meadow", targetScore: 18, moleTime: 5200, spawnDelay: 700, holes: 4 },
+  { level: 4, name: "Level 4: Deep Woods", targetScore: 22, moleTime: 4600, spawnDelay: 600, holes: 5 },
+  { level: 5, name: "Level 5: Mole Fortress", targetScore: 26, moleTime: 4000, spawnDelay: 500, holes: 6 },
+  { level: 6, name: "Level 6: Whack Master", targetScore: 30, moleTime: 3400, spawnDelay: 400, holes: 6 }
 ];
 
 function getHolePositions(count = 6) {
@@ -35,6 +35,15 @@ function getHolePositions(count = 6) {
         { x: CenterX + 300, y: CenterY - 140 },
         { x: CenterX - 300, y: CenterY + 140 },
         { x: CenterX + 300, y: CenterY + 140 }
+      ];
+    case 5:
+      // 5 holes in a quincunx layout
+      return [
+        { x: CenterX, y: CenterY - 180 },
+        { x: CenterX - 320, y: CenterY - 60 },
+        { x: CenterX + 320, y: CenterY - 60 },
+        { x: CenterX - 220, y: CenterY + 180 },
+        { x: CenterX + 220, y: CenterY + 180 }
       ];
     case 6:
     default:
@@ -242,6 +251,8 @@ function renderBackground(scene, levelConfig = null) {
         backgroundKey = 'grassy-meadow';
         break;
       case 4:
+        backgroundKey = 'deep-woods';
+        break;
       case 5:
       case 6:
         backgroundKey = 'backyard'; // placeholder until othr background art has been created
@@ -529,6 +540,7 @@ class BootScene extends Phaser.Scene {
     this.load.image('backyard', 'assets/backyard.png');
     this.load.image('vegetable-patch', 'assets/vegetable-patch.png');
     this.load.image('grassy-meadow', 'assets/grassy-meadow.png');
+    this.load.image('deep-woods', 'assets/deep-woods.png');
     this.load.image('hole', 'assets/hole.png');
     this.load.image('hammer', 'assets/hammer1.png');
     this.load.image('mole', 'assets/mole.png');
@@ -536,6 +548,7 @@ class BootScene extends Phaser.Scene {
     this.load.image('missed-mole', 'assets/missed-mole.png');
     this.load.image('rabbit', 'assets/rabbit.png');
     this.load.image('crying-rabbit', 'assets/crying-rabbit.png');
+    this.load.image('bomb', 'assets/bomb.png');
   }
 
   create() {
@@ -899,6 +912,10 @@ class GameScene extends Phaser.Scene {
     this.activeRabbit = false;
     this.rabbitHoleIndex = -1;
     this.timerTween = null;
+    this.bombTimerEvent = null;
+    this.bombTargetMole = null;
+    this.bombPending = false;
+    this.bomb = null;
     this.pauseModalContainer = null;
     this.registeredButtons = [];
   }
@@ -934,6 +951,11 @@ class GameScene extends Phaser.Scene {
     this.rabbit.setScale(3);
     this.rabbit.setVisible(false);
     this.rabbit.setDepth(6);
+
+    this.bomb = this.add.image(0, 0, 'bomb');
+    this.bomb.setScale(2);
+    this.bomb.setDepth(8);
+    this.bomb.setVisible(false);
 
     // Create Mole Timer Bar
     this.timerBar = this.createMoleTimerBar();
@@ -979,7 +1001,7 @@ class GameScene extends Phaser.Scene {
     });
 
     // Start mole spawning after 1 second
-    this.time.delayedCall(1000, () => this.activateRandomMole());
+    this.time.delayedCall(1500, () => this.activateRandomMole());
 
     // A rabbit appears independently every 10 seconds
     this.rabbitTimerEvent = this.time.addEvent({
@@ -987,6 +1009,16 @@ class GameScene extends Phaser.Scene {
       loop: true,
       callback: () => this.activateRandomRabbit()
     });
+
+    if (this.gameMode === 'level' && this.levelConfig.level === 3) {
+      this.bombTimerEvent = this.time.addEvent({
+        delay: 20000,
+        loop: true,
+        callback: () => {
+          this.bombPending = true;
+        }
+      });
+    }
 
     // Synchronize GameScene targets (mole holes & HUD pause button) to ESP32 / Simulator
     syncSceneTargets(this);
@@ -1008,6 +1040,11 @@ class GameScene extends Phaser.Scene {
 
     updateCustomCursor(this.input.activePointer, this.cursor, this);
     processSceneButtonDwell(this, delta);
+
+    if (this.bombTargetMole && this.bombTargetMole.visible) {
+      this.bomb.x = this.bombTargetMole.x + 70;
+      this.bomb.y = this.bombTargetMole.y - 60;
+    }
 
     // ----------------------------------------------------
     // Dead-Zone Safety Check & State Machine
@@ -1044,8 +1081,9 @@ class GameScene extends Phaser.Scene {
         }
         this.dwellTime += delta;
         this.dwellTargetMole = target.candidate;
+        const dwellDuration = target.candidate === this.rabbit ? 500 : 240;
 
-        if (this.dwellTime >= 240) {
+        if (this.dwellTime >= dwellDuration) {
           // Ring completed: IMMEDIATELY wipe ring before triggering whack
           this.clearDwellRing();
           this.dwellTime = 0;
@@ -1053,7 +1091,7 @@ class GameScene extends Phaser.Scene {
           this.whackMole();
         } else {
           // Draw radial progress arc around mole
-          const progress = Math.min(1.0, this.dwellTime / 240);
+          const progress = Math.min(1.0, this.dwellTime / dwellDuration);
           this.drawDwellRing(target.candidate.x, target.candidate.y, progress);
         }
       } else {
@@ -1571,6 +1609,25 @@ class GameScene extends Phaser.Scene {
     return Math.max(400, 1000 - this.score * 20);
   }
 
+  assignBombToActiveMole() {
+    if (this.gameMode !== 'level' || this.levelConfig.level !== 3 || !this.activeMole || this.bombTargetMole) return;
+
+    this.bombTargetMole = this.activeMole;
+    this.bombPending = false;
+    this.bomb.x = this.bombTargetMole.x + 24;
+    this.bomb.y = this.bombTargetMole.y - 72;
+    this.bomb.setVisible(true);
+    if (this.timerTween) this.timerTween.timeScale = 1.3;
+  }
+
+  clearBombFromMole(mole) {
+    if (this.bombTargetMole !== mole) return;
+
+    this.bombTargetMole = null;
+    this.bomb.setVisible(false);
+    if (this.timerTween) this.timerTween.timeScale = 1;
+  }
+
   activateRandomMole() {
     if (this.activeMole || this.gameOver || this.gameComplete || this.isPaused || this.isDeadZonePaused || this.isCountingDown) {
       return;
@@ -1684,6 +1741,10 @@ class GameScene extends Phaser.Scene {
     }
   });
 
+    if (this.bombPending) {
+      this.assignBombToActiveMole();
+    }
+
     this.tweens.add({
       targets: selectedMole,
       y: hole.y - 5,
@@ -1754,6 +1815,7 @@ class GameScene extends Phaser.Scene {
     if (index === -1) return;
 
     const hole = this.holes[index];
+    this.clearBombFromMole(mole);
     //stop mole shake
     this.tweens.killTweensOf(mole);
     mole.x = hole.x;
@@ -1804,12 +1866,13 @@ class GameScene extends Phaser.Scene {
       this.dwellTime = 0;
       this.dwellTargetMole = null;
 
+      const wasBombed = this.bombTargetMole === mole;
       mole.setTexture('whacked-mole');
-      this.score += 1;
+      this.score += wasBombed ? 2 : 1;
       this.updateHUD();
 
       const bonusActive = this.gameMode === 'level' && this.score > this.levelConfig.targetScore;
-      const popupText = bonusActive ? '+1 BONUS' : '+1';
+      const popupText = wasBombed ? '+2' : (bonusActive ? '+1 BONUS' : '+1');
       const popup = this.add.text(mole.x, mole.y - 40, popupText, {
         fontFamily: PIXEL_FONT,
         fontSize: bonusActive ? '26px' : '22px',
