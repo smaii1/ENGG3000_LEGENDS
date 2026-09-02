@@ -5,10 +5,10 @@
 
 class ESPTrackerService {
   constructor() {
-    const isLocal = typeof window !== 'undefined' && window.location &&
-      (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
-    this.host = localStorage.getItem('esp_tracker_host') || (isLocal ? 'localhost' : '192.168.4.1');
-    this.port = parseInt(localStorage.getItem('esp_tracker_port') || (isLocal ? '8081' : '81'), 10);
+    const savedHost = localStorage.getItem('esp_tracker_host');
+    this.host = (savedHost && savedHost !== 'localhost' && savedHost !== '127.0.0.1') ? savedHost : '192.168.4.1';
+    const savedPort = localStorage.getItem('esp_tracker_port');
+    this.port = (savedPort && savedPort !== '8081') ? parseInt(savedPort, 10) : 81;
     this.ws = null;
     this.isConnected = false;
     this.isConnecting = false;
