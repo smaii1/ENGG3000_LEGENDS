@@ -70,6 +70,15 @@ function getHolePositions(count = 6, level = null) {
 
 const PROGRESS_KEY = 'whack_a_mole_progress_v1';
 const PIXEL_FONT = '"Courier New", Courier, monospace';
+const HAMMER_OPTIONS = [
+  { key: 'hammer', name: 'HAMMER', asset: 'hammer1.png', scale: 10, angle: 0 },
+  { key: 'pirate-cutlass', name: 'CUTLASS', asset: 'pirate-cutlass.png', scale: 3.2, angle: 0 },
+  { key: 'viking-axe', name: 'VIKING AXE', asset: 'viking-axe.png', scale: 3.2, angle: -20 }
+];
+
+function getHammerOption(key) {
+  return HAMMER_OPTIONS.find(option => option.key === key) || HAMMER_OPTIONS[0];
+}
 
 function getGameProgress() {
   try {
@@ -109,8 +118,10 @@ function createCustomCursor(scene) {
   shadow.setDepth(99);
 
   // Hammer image scaled and positioned
-  const hammer = scene.add.image(0, 0, 'hammer');
-  hammer.setScale(10);
+  const hammerOption = getHammerOption(getGameProgress().hammerStyle);
+  const hammer = scene.add.image(0, 0, hammerOption.key);
+  hammer.setScale(hammerOption.scale);
+  hammer.setAngle(hammerOption.angle);
   hammer.setOrigin(0.4, 0.6);
   hammer.setDepth(100);
 
@@ -124,6 +135,7 @@ function createCustomCursor(scene) {
     offsetX: 0,
     offsetY: 0,
     slamAngle: 0,
+    baseAngle: hammerOption.angle,
     tiltAngle: 0,
     lastX: 600,
     lastY: 400,
@@ -134,6 +146,20 @@ function createCustomCursor(scene) {
   };
 
   return cursorObj;
+}
+
+function setHammerStyle(scene, hammerKey) {
+  const hammerOption = getHammerOption(hammerKey);
+  const progress = getGameProgress();
+  progress.hammerStyle = hammerOption.key;
+  saveGameProgress(progress);
+
+  if (scene.cursor && scene.cursor.hammer) {
+    scene.cursor.hammer.setTexture(hammerOption.key);
+    scene.cursor.hammer.setScale(hammerOption.scale);
+    scene.cursor.baseAngle = hammerOption.angle;
+    scene.cursor.hammer.setAngle(hammerOption.angle);
+  }
 }
 
 function updateCustomCursor(pointer, cursorObj, scene) {
@@ -188,7 +214,7 @@ function updateCustomCursor(pointer, cursorObj, scene) {
   // Hammer follows position plus dynamic slam offset and combined rotation
   cursorObj.hammer.x = targetX + cursorObj.offsetX;
   cursorObj.hammer.y = targetY + cursorObj.offsetY;
-  cursorObj.hammer.angle = cursorObj.slamAngle + cursorObj.tiltAngle;
+  cursorObj.hammer.angle = cursorObj.baseAngle + cursorObj.slamAngle + cursorObj.tiltAngle;
 }
 
 function triggerWhackAnimation(scene, cursorObj) {
@@ -430,8 +456,8 @@ function syncSceneTargets(scene) {
   const targets = [];
   const sceneKey = scene.scene ? scene.scene.key : (scene.constructor ? scene.constructor.name : '');
 
-  if (sceneKey === 'MenuScene') {
-    // Collect active menu buttons
+  if (sceneKey === 'MenuScene' || sceneKey === 'HammerCustomiseScene') {
+    // Collect active menu and customization buttons
     if (scene.registeredButtons) {
       scene.registeredButtons.forEach(btn => {
         if (btn.isDisabled || (btn.container && !btn.container.visible)) return;
@@ -552,6 +578,8 @@ class BootScene extends Phaser.Scene {
     this.load.image('deep-woods', 'assets/deep-woods.png');
     this.load.image('hole', 'assets/hole.png');
     this.load.image('hammer', 'assets/hammer1.png');
+    this.load.image('pirate-cutlass', 'assets/pirate-cutlass.png');
+    this.load.image('viking-axe', 'assets/viking-axe.png');
     this.load.image('mole', 'assets/mole.png');
     this.load.image('whacked-mole', 'assets/whacked-mole.png');
     this.load.image('missed-mole', 'assets/missed-mole.png');
@@ -628,6 +656,10 @@ class MenuScene extends Phaser.Scene {
       this.scene.start('GameScene', { mode: 'endless' });
     }, { bgColor: 0xd35400, hoverColor: 0xe67e22, borderColor: 0x7e3100, fontSize: '24px' });
 
+    createPixelButton(this, 600, 540, 360, 55, 'CUSTOMISE HAMMER', () => {
+      this.scene.start('HammerCustomiseScene');
+    }, { bgColor: 0x8e44ad, hoverColor: 0x9b59b6, borderColor: 0x5b2c6f, fontSize: '19px' });
+
     // Mode Toggle Button (ESP Tracker vs Mouse)
     const updateMenuModeBtn = () => {
       if (this.modeBtn && this.modeBtn.btnData && this.modeBtn.btnData.label) {
@@ -635,7 +667,7 @@ class MenuScene extends Phaser.Scene {
       }
     };
 
-    this.modeBtn = createPixelButton(this, 600, 540, 360, 55, window.espTracker.getModeLabel(), () => {
+    this.modeBtn = createPixelButton(this, 600, 620, 360, 55, window.espTracker.getModeLabel(), () => {
       window.espTracker.toggleMode();
       updateMenuModeBtn();
     }, { bgColor: 0x2980b9, hoverColor: 0x3498db, borderColor: 0x1a5276, fontSize: '18px' });
@@ -675,6 +707,101 @@ class MenuScene extends Phaser.Scene {
     });
 
     // Synchronize MenuScene UI button targets to ESP32 / Simulator
+    syncSceneTargets(this);
+  }
+
+  update(time, delta) {
+    if (window.espTracker) {
+      window.espTracker.update(delta);
+    }
+    updateCustomCursor(this.input.activePointer, this.cursor, this);
+    processSceneButtonDwell(this, delta);
+  }
+}
+
+// ----------------------------------------------------
+// Hammer Customisation Scene
+// ----------------------------------------------------
+class HammerCustomiseScene extends Phaser.Scene {
+  constructor() {
+    super('HammerCustomiseScene');
+  }
+
+  create() {
+    this.registeredButtons = [];
+    renderBackground(this);
+    this.cursor = createCustomCursor(this);
+    this.add.rectangle(600, 400, 1200, 800, 0x000000, 0.5).setDepth(1);
+
+    const panel = this.add.container(600, 370).setDepth(2);
+    const panelBg = this.add.rectangle(0, 0, 760, 470, 0x1e272e, 0.96);
+    panelBg.setStrokeStyle(4, 0xf1c40f, 1);
+    const panelShadow = this.add.rectangle(5, 5, 760, 470, 0x000000, 0.6);
+    const title = this.add.text(0, -175, 'CUSTOMISE HAMMER', {
+      fontFamily: PIXEL_FONT,
+      fontSize: '34px',
+      fontStyle: 'bold',
+      color: '#f1c40f',
+      stroke: '#000000',
+      strokeThickness: 5
+    }).setOrigin(0.5);
+    const subtitle = this.add.text(0, -125, 'SELECT YOUR HAMMER STYLE', {
+      fontFamily: PIXEL_FONT,
+      fontSize: '18px',
+      fontStyle: 'bold',
+      color: '#ffffff',
+      stroke: '#000000',
+      strokeThickness: 3
+    }).setOrigin(0.5);
+    panel.add([panelShadow, panelBg, title, subtitle]);
+
+    const currentKey = getHammerOption(getGameProgress().hammerStyle).key;
+    const pickerButtons = [];
+    const updateSelection = () => {
+      const selectedKey = getHammerOption(getGameProgress().hammerStyle).key;
+      pickerButtons.forEach(button => {
+        const selected = button.btnData.optionKey === selectedKey;
+        button.btnData.bg.setStrokeStyle(4, selected ? 0xf1c40f : 0x1c2833, 1);
+      });
+    };
+
+    HAMMER_OPTIONS.forEach((option, index) => {
+      const pickerButton = createPixelButton(this, 360 + index * 240, 430, 190, 145, option.name, () => {
+        setHammerStyle(this, option.key);
+        this.scene.start('MenuScene');
+      }, {
+        bgColor: 0x34495e,
+        hoverColor: 0x4b6584,
+        borderColor: option.key === currentKey ? 0xf1c40f : 0x1c2833,
+        fontSize: '15px',
+        depth: 3
+      });
+      pickerButton.btnData.optionKey = option.key;
+      pickerButton.btnData.label.y = 48;
+
+      const preview = this.add.image(0, -20, option.key);
+      preview.setDisplaySize(78, 78);
+      pickerButton.add(preview);
+      pickerButtons.push(pickerButton);
+    });
+    updateSelection();
+
+    createPixelButton(this, 600, 685, 240, 52, 'BACK TO MENU', () => {
+      this.scene.start('MenuScene');
+    }, { bgColor: 0x555555, hoverColor: 0x777777, borderColor: 0x222222, fontSize: '17px', depth: 3 });
+
+    this.input.on('pointerdown', () => {
+      triggerWhackAnimation(this, this.cursor);
+    });
+
+    this.mirrorChangeCb = () => syncSceneTargets(this);
+    if (window.espTracker) {
+      window.espTracker.on('mirrorChange', this.mirrorChangeCb);
+    }
+    this.events.on('shutdown', () => {
+      if (this.mirrorChangeCb && window.espTracker) window.espTracker.off('mirrorChange', this.mirrorChangeCb);
+      if (window.espTracker) window.espTracker.clearTargets();
+    });
     syncSceneTargets(this);
   }
 
@@ -2415,7 +2542,7 @@ const config = {
     antialias: false,
     powerPreference: 'high-performance'
   },
-  scene: [BootScene, MenuScene, LevelSelectScene, GameScene]
+  scene: [BootScene, MenuScene, HammerCustomiseScene, LevelSelectScene, GameScene]
 };
 
 const game = new Phaser.Game(config);
