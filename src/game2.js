@@ -7,7 +7,7 @@ const LEVEL_CONFIGS = [
   { level: 3, name: "Level 3: Grassy Meadow", targetScore: 18, moleTime: 5200, spawnDelay: 700, holes: 4 },
   { level: 4, name: "Level 4: Deep Woods", targetScore: 22, moleTime: 4600, spawnDelay: 600, holes: 5 },
   { level: 5, name: "Level 5: Mole Fortress", targetScore: 26, moleTime: 4600, spawnDelay: 1200, holes: 6 }, //same moleTime as lvl4 but increased spawndelay because there can 2moles up at a time
-  { level: 6, name: "Level 6: Whack Master", targetScore: 30, moleTime: 4000, spawnDelay: 400, holes: 6 }
+  { level: 6, name: "Level 6: Whack Master", targetScore: 30, moleTime: 4000, spawnDelay: 1000, holes: 6 }
 ];
 
 function getHolePositions(count = 6, level = null) {
@@ -1148,7 +1148,7 @@ class GameScene extends Phaser.Scene {
     // Start mole spawning after 1 second
     this.time.delayedCall(1500, () => {
       this.activateRandomMole();
-      if (this.gameMode === 'level' && this.levelConfig.level === 5) {
+      if (this.isLevelFive()) {
         this.scheduleLevelFiveMoleSpawn();
       }
     });
@@ -1540,7 +1540,7 @@ class GameScene extends Phaser.Scene {
         strokeThickness: 3
       });
 
-      this.livesText = this.add.text(730, 23, 'LIVES: ❤️ ❤️ ❤️', {
+      this.livesText = this.add.text(730, 23, 'LIVES: ❤️ ❤️ ❤️', { 
         fontFamily: PIXEL_FONT,
         fontSize: '17px',
         fontStyle: 'bold',
@@ -1591,7 +1591,7 @@ class GameScene extends Phaser.Scene {
     const remainingLives = Math.max(0, this.maxMissedMoles - this.missedMoles);
     let heartsStr = 'LIVES: ';
     for (let i = 0; i < this.maxMissedMoles; i++) {
-      heartsStr += i < remainingLives ? '❤️ ' : '🖤 ';
+      heartsStr += i < remainingLives ? '❤️ ' : '🖤 '; 
     }
 
     if (this.gameMode === 'level') {
@@ -1795,7 +1795,7 @@ class GameScene extends Phaser.Scene {
   }
 
   isLevelFive() {
-    return this.gameMode === 'level' && this.levelConfig.level === 5;
+    return this.gameMode === 'level' && this.levelConfig.level >= 5;
   }
 
   scheduleLevelFiveMoleSpawn() {
