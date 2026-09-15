@@ -2,12 +2,12 @@
 // Level Definitions & Configurations
 // ----------------------------------------------------
 const LEVEL_CONFIGS = [
-  { level: 1, name: "Level 1: Backyard", targetScore: 10, moleTime: 6400, spawnDelay: 900, holes: 2 },
-  { level: 2, name: "Level 2: Vegetable Patch", targetScore: 14, moleTime: 5800, spawnDelay: 800, holes: 3 },
-  { level: 3, name: "Level 3: Grassy Meadow", targetScore: 18, moleTime: 5200, spawnDelay: 700, holes: 4 },
-  { level: 4, name: "Level 4: Deep Woods", targetScore: 22, moleTime: 4600, spawnDelay: 600, holes: 5 },
-  { level: 5, name: "Level 5: Mole Fortress", targetScore: 26, moleTime: 4600, spawnDelay: 1200, holes: 6 }, //same moleTime as lvl4 but increased spawndelay because there can 2moles up at a time
-  { level: 6, name: "Level 6: Whack Master", targetScore: 30, moleTime: 4000, spawnDelay: 1000, holes: 6 }
+  { level: 1, name: "Level 1: Backyard", targetScore: 100, moleTime: 6400, spawnDelay: 900, holes: 2 },
+  { level: 2, name: "Level 2: Vegetable Patch", targetScore: 140, moleTime: 5800, spawnDelay: 800, holes: 3 },
+  { level: 3, name: "Level 3: Grassy Meadow", targetScore: 180, moleTime: 5200, spawnDelay: 700, holes: 4 },
+  { level: 4, name: "Level 4: Deep Woods", targetScore: 220, moleTime: 4600, spawnDelay: 600, holes: 5 },
+  { level: 5, name: "Level 5: Mole Fortress", targetScore: 260, moleTime: 4600, spawnDelay: 1200, holes: 6 }, //same moleTime as lvl4 but increased spawndelay because there can 2moles up at a time
+  { level: 6, name: "Level 6: Whack Master", targetScore: 300, moleTime: 4000, spawnDelay: 1000, holes: 6 }
 ];
 
 function getHolePositions(count = 6, level = null) {
@@ -1963,14 +1963,14 @@ class GameScene extends Phaser.Scene {
     if (this.gameMode === 'level') {
       return this.levelConfig.moleTime;
     }
-    return Math.max(900, 3200 - this.score * 75);
+    return Math.max(900, 3200 - this.score * 7.5);
   }
 
   getMoleSpawnDelay() {
     if (this.gameMode === 'level') {
       return this.levelConfig.spawnDelay;
     }
-    return Math.max(400, 1000 - this.score * 20);
+    return Math.max(400, 1000 - this.score * 2.0);
   }
 
   assignBombToActiveMole() {
@@ -2292,7 +2292,7 @@ class GameScene extends Phaser.Scene {
             ease: 'Back.easeIn',
             onComplete: () => {
               this.rabbit.setVisible(false);
-              this.score += 3; // score ++ 3 if rabbit is not whacked
+              this.score += 30; // score ++ 3 if rabbit is not whacked
               this.activeRabbit = false;
               this.rabbitHoleIndex = -1;
             }
@@ -2426,11 +2426,11 @@ class GameScene extends Phaser.Scene {
 
       const wasBombed = this.bombTargetMole === mole;
       mole.setTexture('whacked-mole');
-      this.score += wasBombed ? 2 : 1;
+      this.score += wasBombed ? 20 : 10;
       this.updateHUD();
 
       const bonusActive = this.gameMode === 'level' && this.score > this.levelConfig.targetScore;
-      const popupText = wasBombed ? '+2' : (bonusActive ? '+1 BONUS' : '+1');
+      const popupText = wasBombed ? '+20' : (bonusActive ? '+10 BONUS' : '+10');
       const popup = this.add.text(mole.x, mole.y - 40, popupText, {
         fontFamily: PIXEL_FONT,
         fontSize: bonusActive ? '26px' : '22px',
@@ -2683,7 +2683,7 @@ class GameScene extends Phaser.Scene {
         panel.add(descTxt);
       });
 
-      const bonusCount = Math.max(0, this.score - this.levelConfig.targetScore);
+      const bonusCount = Math.max(0, this.score - this.levelConfig.targetScore)/10;
       const scoreSummary = this.add.text(0, 55,
         `WHACKED: ${this.score} | TARGET: ${this.levelConfig.targetScore}\nBONUS: ${bonusCount} | MISSES: ${this.missedMoles}`, {
         fontFamily: PIXEL_FONT,

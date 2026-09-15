@@ -157,7 +157,7 @@ function whackMole(scene) {
   const hammerY = gameState.hammer.y;
   const distance = Phaser.Math.Distance.Between(hammerX, hammerY, mole.x, mole.y);
   if (distance < 80) { //if hammer is close enough to the mole
-    gameState.score += 1; //increase score
+    gameState.score += 10; //increase score
     gameState.scoreText.setText('Score: ' + gameState.score); //update score text
     deactivateMole(scene, mole); //deactivate the mole
   }
