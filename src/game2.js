@@ -1277,6 +1277,29 @@ class GameScene extends Phaser.Scene {
     // Setup Uncluttered Pixel-styled HUD
     this.setupHUD();
 
+    // Skip to next level button
+    this.skipLevelButton = createPixelButton(
+    this,
+      600,
+      755,
+      300,
+      45,
+   '✦ NEXT LEVEL ✦',
+    () => {
+    this.skipToNextLevel();
+    },
+    {
+      bgColor: 0x27ae60,
+      hoverColor: 0x2ecc71,
+      borderColor: 0x145a32,
+      fontSize: '17px',
+      depth: 25
+    }
+  );
+
+  // Hidden until the target score is reached
+  this.skipLevelButton.setVisible(false);
+
     // Level 60s Countdown Timer
     if (this.gameMode === 'level') {
       this.levelTimerEvent = this.time.addEvent({
@@ -1764,9 +1787,16 @@ class GameScene extends Phaser.Scene {
 
     if (this.gameMode === 'level') {
       this.scoreText.setText(`SCORE: ${this.score}`);
-      if (this.score >= this.levelConfig.targetScore) {
-        this.scoreText.setColor('#2ecc71');
+
+    if (this.score >= this.levelConfig.targetScore) {
+      this.scoreText.setColor('#2ecc71');
+
+      // Show skip button once target is reached
+    if (this.skipLevelButton && this.levelIndex + 1 < LEVEL_CONFIGS.length) {
+      this.skipLevelButton.setVisible(true);
+        }
       }
+
       this.timerText.setText(`TIME: ${this.levelTimeLeft}s`);
       if (this.levelTimeLeft <= 10) {
         this.timerText.setColor('#ff4d4d');
@@ -2496,6 +2526,56 @@ class GameScene extends Phaser.Scene {
     syncSceneTargets(this);
   }
 
+  skipToNextLevel() {
+    // Only allow skipping after reaching the target
+    if (
+      this.gameMode !== 'level' ||
+      this.score < this.levelConfig.targetScore ||
+      this.levelIndex + 1 >= LEVEL_CONFIGS.length
+    ) {
+    return;
+    }
+
+    this.gameComplete = true;
+    this.canWhack = false;
+
+    // Stop the current level
+    if (this.timerTween) this.timerTween.stop();
+    if (this.levelTimerEvent) this.levelTimerEvent.remove(false);
+    this.stopLevelFiveMoleTimers();
+    this.timerBar.container.setVisible(false);
+
+    // Save progress for the completed level
+    const currentLevel = this.levelConfig.level;
+    const progress = getGameProgress();
+
+    const star1 = true;
+    const star2 = this.score > this.levelConfig.targetScore;
+    const star3 = this.missedMoles === 0;
+
+    const totalStars =
+     (star1 ? 1 : 0) +
+     (star2 ? 1 : 0) +
+      (star3 ? 1 : 0);
+
+    if (currentLevel >= progress.unlockedLevel) {
+     progress.unlockedLevel = currentLevel + 1;
+    }
+
+    const existingStars = progress.levelStars[currentLevel] || 0;
+    progress.levelStars[currentLevel] = Math.max(existingStars, totalStars);
+
+    const existingHigh = progress.levelHighScores[currentLevel] || 0;
+    progress.levelHighScores[currentLevel] = Math.max(existingHigh, this.score);
+
+    saveGameProgress(progress);
+
+    // Start the next level immediately
+    this.scene.start('GameScene', {
+       mode: 'level',
+       levelIndex: this.levelIndex + 1
+    });
+  }
   handleLevelTimeUp() {
     this.gameComplete = true;
     this.canWhack = false;
@@ -2637,7 +2717,7 @@ class GameScene extends Phaser.Scene {
     const btnY = 175;
 
     if (hasNextLevel) {
-      createPixelButton(this, 600 + 180, 380 + btnY, 180, 52, 'NEXT LEVEL ➡', () => {
+      createPixelButton(this, 600 + 180, 380 + btnY, 180, 52, '✦ NEXT LEVEL ✦ ', () => {
         this.scene.start('GameScene', { mode: 'level', levelIndex: this.levelIndex + 1 });
       }, { bgColor: 0x27ae60, hoverColor: 0x2ecc71, borderColor: 0x145a32, fontSize: '17px', depth: 60 });
 
