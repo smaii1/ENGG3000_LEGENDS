@@ -648,17 +648,26 @@ class MenuScene extends Phaser.Scene {
     });
 
     // Buttons
-    createPixelButton(this, 600, 360, 360, 65, '⭐ LEVELS MODE', () => {
+    createPixelButton(this, 600, 330, 360, 65, '⭐ LEVELS MODE', () => {
       this.scene.start('LevelSelectScene');
     }, { bgColor: 0x27ae60, hoverColor: 0x2ecc71, borderColor: 0x145a32, fontSize: '24px' });
 
-    createPixelButton(this, 600, 450, 360, 65, '⚡ ENDLESS MODE', () => {
+    createPixelButton(this, 600, 415, 360, 65, '⚡ ENDLESS MODE', () => {
       this.scene.start('GameScene', { mode: 'endless' });
     }, { bgColor: 0xd35400, hoverColor: 0xe67e22, borderColor: 0x7e3100, fontSize: '24px' });
 
-    createPixelButton(this, 600, 540, 360, 55, 'CUSTOMISE HAMMER', () => {
+    createPixelButton(this, 600, 500, 360, 55, 'CUSTOMISE HAMMER', () => {
       this.scene.start('HammerCustomiseScene');
     }, { bgColor: 0x8e44ad, hoverColor: 0x9b59b6, borderColor: 0x5b2c6f, fontSize: '19px' });
+
+    createPixelButton(this, 600, 575, 360, 55, '✦ INSTRUCTIONS ✦', () => {
+      this.scene.start('InstructionsScene');
+    }, {
+         bgColor: 0x34495e,
+         hoverColor: 0x5dade2,
+        borderColor: 0x1c2833,
+        fontSize: '19px'
+  });
 
     // Mode Toggle Button (ESP Tracker vs Mouse)
     const updateMenuModeBtn = () => {
@@ -667,7 +676,7 @@ class MenuScene extends Phaser.Scene {
       }
     };
 
-    this.modeBtn = createPixelButton(this, 600, 620, 360, 55, window.espTracker.getModeLabel(), () => {
+    this.modeBtn = createPixelButton(this, 600, 650, 360, 55, window.espTracker.getModeLabel(), () => {
       window.espTracker.toggleMode();
       updateMenuModeBtn();
     }, { bgColor: 0x2980b9, hoverColor: 0x3498db, borderColor: 0x1a5276, fontSize: '18px' });
@@ -688,7 +697,7 @@ class MenuScene extends Phaser.Scene {
 
     // Tracker Status Hint Bar at bottom
     const progress = getGameProgress();
-    const bestBox = this.add.container(840, 450).setDepth(3);
+    const bestBox = this.add.container(840, 415).setDepth(3);
     const bestText = this.add.text(0, 0, `BEST: ${progress.endlessHighScore}`, {
       fontFamily: PIXEL_FONT,
       fontSize: '16px',
@@ -719,6 +728,166 @@ class MenuScene extends Phaser.Scene {
   }
 }
 
+  // ----------------------------------------------------
+  // Instructions Scene
+  // ----------------------------------------------------
+  class InstructionsScene extends Phaser.Scene {
+    constructor() {
+    super('InstructionsScene');
+  }
+
+  create() {
+    this.registeredButtons = [];
+    renderBackground(this);
+    this.cursor = createCustomCursor(this);
+
+    // Dark mystical overlay
+    this.add.rectangle(600, 400, 1200, 800, 0x000000, 0.65).setDepth(1);
+
+    // Main instructions panel
+    const panel = this.add.container(600, 400).setDepth(2);
+
+    const panelShadow = this.add.rectangle(6, 6, 850, 650, 0x000000, 0.7);
+
+    const panelBg = this.add.rectangle(0, 0, 850, 650, 0x16213e, 0.96);
+    panelBg.setStrokeStyle(5, 0xf1c40f, 1);
+
+    panel.add([panelShadow, panelBg]);
+
+    // Title
+    const title = this.add.text(0, -275, '✦ THE MOLE’S QUEST ✦', {
+      fontFamily: PIXEL_FONT,
+      fontSize: '36px',
+      fontStyle: 'bold',
+      color: '#f1c40f',
+      stroke: '#000000',
+      strokeThickness: 5
+    }).setOrigin(0.5);
+
+    const subtitle = this.add.text(0, -225, 'ENTER THE MEADOW... IF YOU DARE', {
+      fontFamily: PIXEL_FONT,
+      fontSize: '17px',
+      fontStyle: 'bold',
+      color: '#ffffff',
+      stroke: '#000000',
+      strokeThickness: 3
+    }).setOrigin(0.5);
+
+    panel.add([title, subtitle]);
+
+    // Instructions text
+    // Instructions - two column layout
+
+  const leftInstructions = [
+    '🌙  YOUR QUEST',
+    'Strike the moles as they rise.',
+    'Every hit earns you points!',
+    '',
+    '🐰  WATCH THE RABBIT',
+    'A friendly rabbit may appear...',
+    'DO NOT hit the rabbit!',
+    '',
+    '❤️  THREE LIVES',
+    'You have 3 lives.',
+    'Miss too many moles and',
+    'your quest will end.'
+    ].join('\n');
+
+  const rightInstructions = [
+    '⏳  BE QUICK',
+    'The moles will not wait forever.',
+    'Hit them before they disappear!',
+    '',
+   '💣  BEWARE THE BOMB MOLE',
+   'A dangerous bomb mole can appear.',
+    'Avoid striking it!',
+    '',
+    '✨  THE CHALLENGE',
+    'Hit as many moles as you can,',
+    'build your score,',
+    'become the WHACK MASTER!'
+  ].join('\n');
+
+  const leftText = this.add.text(-390, -155, leftInstructions, {
+    fontFamily: PIXEL_FONT,
+    fontSize: '16px',
+    fontStyle: 'bold',
+    color: '#ffffff',
+    lineSpacing: 7,
+    stroke: '#000000',
+    strokeThickness: 2,
+    align: 'left',
+    wordWrap: { width: 350 }
+  }).setOrigin(0, 0);
+
+  const rightText = this.add.text(40, -155, rightInstructions, {
+    fontFamily: PIXEL_FONT,
+    fontSize: '16px',
+    fontStyle: 'bold',
+    color: '#ffffff',
+    lineSpacing: 7,
+    stroke: '#000000',
+    strokeThickness: 2,
+    align: 'left',
+    wordWrap: { width: 350 }
+    }).setOrigin(0, 0);
+
+    panel.add([leftText, rightText]);
+
+    // Decorative stars
+    const stars = this.add.text(0, 290, '✦   ✧   ✦   ✧   ✦', {
+      fontFamily: PIXEL_FONT,
+      fontSize: '24px',
+      color: '#f1c40f'
+    }).setOrigin(0.5);
+
+    panel.add(stars);
+
+    // Back button
+    createPixelButton(this, 600, 745, 240, 52, '⬅ BACK TO MENU', () => {
+      this.scene.start('MenuScene');
+    }, {
+      bgColor: 0x555555,
+      hoverColor: 0x777777,
+      borderColor: 0x222222,
+      fontSize: '17px',
+      depth: 3
+    });
+
+    // Hammer animation
+    this.input.on('pointerdown', () => {
+      triggerWhackAnimation(this, this.cursor);
+    });
+
+    // ESP32 / mouse support
+    this.mirrorChangeCb = () => syncSceneTargets(this);
+
+    if (window.espTracker) {
+      window.espTracker.on('mirrorChange', this.mirrorChangeCb);
+    }
+
+    this.events.on('shutdown', () => {
+      if (this.mirrorChangeCb && window.espTracker) {
+        window.espTracker.off('mirrorChange', this.mirrorChangeCb);
+      }
+
+      if (window.espTracker) {
+        window.espTracker.clearTargets();
+      }
+    });
+
+    syncSceneTargets(this);
+  }
+
+  update(time, delta) {
+    if (window.espTracker) {
+      window.espTracker.update(delta);
+    }
+
+    updateCustomCursor(this.input.activePointer, this.cursor, this);
+    processSceneButtonDwell(this, delta);
+  }
+}
 // ----------------------------------------------------
 // Hammer Customisation Scene
 // ----------------------------------------------------
@@ -734,9 +903,8 @@ class HammerCustomiseScene extends Phaser.Scene {
     this.add.rectangle(600, 400, 1200, 800, 0x000000, 0.5).setDepth(1);
 
     const panel = this.add.container(600, 370).setDepth(2);
-    const panelBg = this.add.rectangle(0, 0, 760, 470, 0x1e272e, 0.96);
-    panelBg.setStrokeStyle(4, 0xf1c40f, 1);
-    const panelShadow = this.add.rectangle(5, 5, 760, 470, 0x000000, 0.6);
+    const panelShadow = this.add.rectangle(6, 6, 900, 650, 0x000000, 0.7);
+    const panelBg = this.add.rectangle(0, 0, 900, 650, 0x16213e, 0.96); 
     const title = this.add.text(0, -175, 'CUSTOMISE HAMMER', {
       fontFamily: PIXEL_FONT,
       fontSize: '34px',
@@ -2575,7 +2743,15 @@ const config = {
     antialias: false,
     powerPreference: 'high-performance'
   },
-  scene: [BootScene, MenuScene, HammerCustomiseScene, LevelSelectScene, GameScene]
+
+  scene: [
+    BootScene,
+    MenuScene,
+    InstructionsScene,
+    HammerCustomiseScene,
+    LevelSelectScene,
+    GameScene
+  ]
 };
 
 const game = new Phaser.Game(config);

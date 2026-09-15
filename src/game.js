@@ -94,12 +94,18 @@ function gameOver(scene) {
 }
 
 function createTimerBar(scene) {
-  const background = scene.add.rectangle(0,0,100,12,0xf4f0f0);
-  const bar = scene.add.rectangle(0,0,96, 8,0x55cc55);
-  const timer = scene.add.container(0,0);
+  const background = scene.add.rectangle(0, 0, 100, 12, 0xf4f0f0);
+  const bar = scene.add.rectangle(0, 0, 96, 8, 0x55cc55);
+
+  const timer = scene.add.container(0, 0);
   timer.add([background, bar]);
-  timer.setDepth(9); //ensure timer is above holes and moles but below hammer
-  return {container:timer, bar:bar, maxWidth:96}; //return the timer container, bar, and max width for scaling
+  timer.setDepth(9);
+
+  return {
+    container: timer,
+    bar: bar,
+    maxWidth: 96
+  };
 }
 
 function createHammer(scene) {
@@ -180,19 +186,53 @@ function activateRandomMole(scene) {
   gameState.timerBar.container.x = hole.x;
   gameState.timerBar.container.y = hole.y - 130; //position timer bar above the mole
   //start time
-  gameState.timerTween = scene.tweens.add({//animate mole popping up
-    targets: gameState.timerBar.bar,
-    width: 0, //decrease width to 0 over time
-    duration: gameState.moleTime,
-    ease: "Linear",
-    onComplete: () => {
-      gameState.timerTween = null; //reset timer tween reference
-      //only decativeate mole if it is still the active mole (it might have been whacked)
-      if (gameState.activeMole === selectedMole) {
-        deactivateMole(scene, selectedMole);
-      }
+  gameState.timerTween = scene.tweens.add({
+  targets: gameState.timerBar.bar,
+  width: 0,
+  duration: gameState.moleTime,
+  ease: "Linear",
+
+  onUpdate: (tween) => {
+    // Get the percentage of time remaining
+    const progress = tween.progress;
+
+    // Change colour based on time remaining
+    if (progress < 0.5) {
+      // Green -> Yellow
+      const colourProgress = progress / 0.5;
+
+      const red = Math.round(85 + (255 - 85) * colourProgress);
+      const green = Math.round(204 + (204 - 204) * colourProgress);
+      const blue = Math.round(85 - (85 * colourProgress));
+
+      const colour = (red << 16) | (green << 8) | blue;
+      gameState.timerBar.bar.setFillStyle(colour);
+
+    } else {
+      // Yellow -> Red
+      const colourProgress = (progress - 0.5) / 0.5;
+
+      const red = 255;
+      const green = Math.round(204 - (204 * colourProgress));
+      const blue = 0;
+
+      const colour = (red << 16) | (green << 8) | blue;
+      gameState.timerBar.bar.setFillStyle(colour);
     }
-  });
+  },
+
+  onComplete: () => {
+    gameState.timerTween = null;
+
+    // Reset colour for the next mole
+    gameState.timerBar.bar.setFillStyle(0x55cc55);
+
+    // Only deactivate if this is still the active mole
+    if (gameState.activeMole === selectedMole) {
+      deactivateMole(scene, selectedMole);
+    }
+  }
+});
 
    scene.tweens.add({//animate mole popping up
     targets: selectedMole,
