@@ -795,7 +795,7 @@ class MenuScene extends Phaser.Scene {
 
   const rightInstructions = [
     '⏳  BE QUICK',
-    'The moles will not wait forever.',
+    'The moles will not wait fore  ver.',
     'Hit them before they disappear!',
     '',
    '💣  BEWARE THE BOMB MOLE',
@@ -2293,7 +2293,7 @@ class GameScene extends Phaser.Scene {
             ease: 'Back.easeIn',
             onComplete: () => {
               this.rabbit.setVisible(false);
-              this.score += 30; // score ++ 3 if rabbit is not whacked
+              this.score += 20; // score ++ 3 if rabbit is not whacked
               this.activeRabbit = false;
               this.rabbitHoleIndex = -1;
             }
