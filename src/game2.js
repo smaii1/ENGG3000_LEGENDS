@@ -70,6 +70,17 @@ function getHolePositions(count = 6, level = null) {
 
 const PROGRESS_KEY = 'whack_a_mole_progress_v1';
 const PIXEL_FONT = '"Courier New", Courier, monospace';
+
+const HIT_RADIUS_MOUSE = 85;
+const HIT_RADIUS_ESP = 135;      
+const RABBIT_RADIUS = 80;         // stays small so a big radius doesn't cause accidental rabbit hits
+const HAMMER_SIZE_BOOST = 1.1;   // hammer size multiplier (1.0 = original size)
+
+function getHitRadius(isRabbit = false) {
+  if (isRabbit) return RABBIT_RADIUS;
+  const isESP = window.espTracker && window.espTracker.mode === 'esp';
+  return isESP ? HIT_RADIUS_ESP : HIT_RADIUS_MOUSE;
+}
 const HAMMER_OPTIONS = [
   { key: 'hammer', name: 'HAMMER', asset: 'hammer1.png', scale: 10, angle: 0 },
   { key: 'pirate-cutlass', name: 'CUTLASS', asset: 'pirate-cutlass.png', scale: 3.2, angle: 0 },
@@ -112,7 +123,7 @@ function createCustomCursor(scene) {
   scene.input.setDefaultCursor('none');
 
   // Shadow ellipse positioned directly on the actual cursor centre (high contrast with white border)
-  const shadow = scene.add.ellipse(0, 0, 64, 32, 0x000000, 0.65);
+  const shadow = scene.add.ellipse(0, 0, 100, 50, 0x000000, 0.65);
   shadow.setStrokeStyle(2, 0xffffff, 0.85);
   shadow.setOrigin(0.5, 0.5);
   shadow.setDepth(99);
@@ -120,7 +131,7 @@ function createCustomCursor(scene) {
   // Hammer image scaled and positioned
   const hammerOption = getHammerOption(getGameProgress().hammerStyle);
   const hammer = scene.add.image(0, 0, hammerOption.key);
-  hammer.setScale(hammerOption.scale);
+  hammer.setScale(hammerOption.scale * HAMMER_SIZE_BOOST);
   hammer.setAngle(hammerOption.angle);
   hammer.setOrigin(0.4, 0.6);
   hammer.setDepth(100);
@@ -156,7 +167,7 @@ function setHammerStyle(scene, hammerKey) {
 
   if (scene.cursor && scene.cursor.hammer) {
     scene.cursor.hammer.setTexture(hammerOption.key);
-    scene.cursor.hammer.setScale(hammerOption.scale);
+    scene.cursor.hammer.setScale(hammerOption.scale * HAMMER_SIZE_BOOST);
     scene.cursor.baseAngle = hammerOption.angle;
     scene.cursor.hammer.setAngle(hammerOption.angle);
   }
@@ -527,7 +538,7 @@ function syncSceneTargets(scene) {
           targets.push({
             x: hole.x,
             y: hole.y,
-            r: 85, // Strike radius in screen pixels (~0.085 normalized)
+            r: 85, // Strike radius in screen pixels (~0.085 normalised)
             t: 0,  // TARGET_TYPE_HOLE
             label: `Hole ${idx + 1}`
           });
@@ -795,7 +806,7 @@ class MenuScene extends Phaser.Scene {
 
   const rightInstructions = [
     '⏳  BE QUICK',
-    'The moles will not wait fore  ver.',
+    'The moles will not wait forever.',
     'Hit them before they disappear!',
     '',
    '💣  BEWARE THE BOMB MOLE',
@@ -1417,14 +1428,14 @@ class GameScene extends Phaser.Scene {
       if (this.activeRabbit) targets.push(this.rabbit);
       const target = targets
         .map(candidate => ({ candidate, distance: Phaser.Math.Distance.Between(strikeX, strikeY, candidate.x, candidate.y) }))
-        .filter(item => item.distance < 85)
+        .filter(item => item.distance < getHitRadius(item.candidate === this.rabbit))
         .sort((first, second) => first.distance - second.distance)[0];
 
-      if (target) {
-        if (this.dwellTargetMole !== target.candidate) {
-          this.dwellTime = 0;
-          this.clearDwellRing();
-        }
+        if (target) {
+          if (this.dwellTargetMole !== target.candidate) {
+           this.dwellTime = 0;
+            this.clearDwellRing();
+          }
         this.dwellTime += delta;
         this.dwellTargetMole = target.candidate;
         const dwellDuration = target.candidate === this.rabbit ? 500 : 240;
@@ -1440,6 +1451,7 @@ class GameScene extends Phaser.Scene {
           const progress = Math.min(1.0, this.dwellTime / dwellDuration);
           this.drawDwellRing(target.candidate.x, target.candidate.y, progress);
         }
+        
       } else {
         if (this.dwellTime > 0) {
           this.dwellTime = 0;
@@ -2399,7 +2411,7 @@ class GameScene extends Phaser.Scene {
 
     if (this.activeRabbit) {
       const rabbitDist = Phaser.Math.Distance.Between(strikeX, strikeY, this.rabbit.x, this.rabbit.y);
-      if (rabbitDist < 85) {
+       if (rabbitDist < getHitRadius(true)) {
         this.rabbit.setTexture('crying-rabbit');
         this.activeRabbit = false;
         this.rabbitHoleIndex = -1;
@@ -2411,14 +2423,14 @@ class GameScene extends Phaser.Scene {
     const mole = this.isLevelFive()
       ? this.activeMoles
         .map(candidate => ({ candidate, distance: Phaser.Math.Distance.Between(strikeX, strikeY, candidate.x, candidate.y) }))
-        .filter(item => item.distance < 85)
+        .filter(item => item.distance < getHitRadius())
         .sort((first, second) => first.distance - second.distance)[0]?.candidate
       : this.activeMole;
     if (!mole) return;
 
     const dist = Phaser.Math.Distance.Between(strikeX, strikeY, mole.x, mole.y);
 
-    if (dist < 85) {
+    if (dist < getHitRadius()) {
       // Immediately clear activeMole and wipe dwell ring before starting retract tween
       this.activeMole = null;
       this.clearDwellRing();
