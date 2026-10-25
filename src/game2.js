@@ -359,6 +359,7 @@ function createPixelButton(scene, x, y, width, height, text, onClick, options = 
     hoverColor,
     onClick,
     isDisabled,
+    createdAt: performance.now(),
     dwellTime: 0,
     isHovered: false
   };
@@ -410,9 +411,31 @@ function processSceneButtonDwell(scene, delta) {
   const curY = scene.cursor.shadow.y;
 
   scene.registeredButtons.forEach(btn => {
-    if (btn.isDisabled || !btn.container.visible) {
+      if (btn.isDisabled || !btn.container.visible) {
       btn.dwellTime = 0;
       if (btn.dwellFill) btn.dwellFill.setVisible(false);
+      return;
+    }
+
+    // While paused, only the pause-menu buttons (depth 60+) can be selected
+    if (scene.isPaused && !(btn.container.depth >= 60)) {
+      btn.dwellTime = 0;
+      btn.isHovered = false;
+      if (btn.dwellFill) btn.dwellFill.setVisible(false);
+      return;
+    }
+
+    // While paused, only the pause-menu buttons (depth 60+) can be selected
+    if (scene.isPaused && !(btn.container.depth >= 60)) {
+      btn.dwellTime = 0;
+      btn.isHovered = false;
+      if (btn.dwellFill) btn.dwellFill.setVisible(false);
+      return;
+    }
+
+        // Ignore the cursor for 1 second after the screen opens
+    if (btn.createdAt && performance.now() - btn.createdAt < 1000) {
+      btn.dwellTime = 0;
       return;
     }
 
@@ -659,19 +682,19 @@ class MenuScene extends Phaser.Scene {
     });
 
     // Buttons
-    createPixelButton(this, 600, 330, 360, 65, '⭐ LEVELS MODE', () => {
+    createPixelButton(this, 220, 360, 340, 80, '⭐ LEVELS MODE', () => {
       this.scene.start('LevelSelectScene');
     }, { bgColor: 0x27ae60, hoverColor: 0x2ecc71, borderColor: 0x145a32, fontSize: '24px' });
 
-    createPixelButton(this, 600, 415, 360, 65, '⚡ ENDLESS MODE', () => {
+    createPixelButton(this, 980, 360, 340, 80, '⚡ ENDLESS MODE', () => {
       this.scene.start('GameScene', { mode: 'endless' });
     }, { bgColor: 0xd35400, hoverColor: 0xe67e22, borderColor: 0x7e3100, fontSize: '24px' });
 
-    createPixelButton(this, 600, 500, 360, 55, 'CUSTOMISE HAMMER', () => {
+    createPixelButton(this, 220, 640, 340, 80, 'CUSTOMISE HAMMER', () => {
       this.scene.start('HammerCustomiseScene');
     }, { bgColor: 0x8e44ad, hoverColor: 0x9b59b6, borderColor: 0x5b2c6f, fontSize: '19px' });
 
-    createPixelButton(this, 600, 575, 360, 55, '✦ INSTRUCTIONS ✦', () => {
+    createPixelButton(this, 980, 640, 340, 80, '✦ INSTRUCTIONS ✦', () => {
       this.scene.start('InstructionsScene');
     }, {
          bgColor: 0x34495e,
@@ -687,7 +710,7 @@ class MenuScene extends Phaser.Scene {
       }
     };
 
-    this.modeBtn = createPixelButton(this, 600, 650, 360, 55, window.espTracker.getModeLabel(), () => {
+    this.modeBtn = createPixelButton(this, 600, 735, 360, 55, window.espTracker.getModeLabel(), () => {
       window.espTracker.toggleMode();
       updateMenuModeBtn();
     }, { bgColor: 0x2980b9, hoverColor: 0x3498db, borderColor: 0x1a5276, fontSize: '18px' });
@@ -708,7 +731,7 @@ class MenuScene extends Phaser.Scene {
 
     // Tracker Status Hint Bar at bottom
     const progress = getGameProgress();
-    const bestBox = this.add.container(840, 415).setDepth(3);
+    const bestBox = this.add.container(1020, 440).setDepth(3);
     const bestText = this.add.text(0, 0, `BEST: ${progress.endlessHighScore}`, {
       fontFamily: PIXEL_FONT,
       fontSize: '16px',
@@ -745,6 +768,11 @@ class MenuScene extends Phaser.Scene {
   class InstructionsScene extends Phaser.Scene {
     constructor() {
     super('InstructionsScene');
+  }
+
+
+  init(data) {
+    this.page = (data && data.page) ? data.page : 0;
   }
 
   create() {
@@ -1010,10 +1038,12 @@ class LevelSelectScene extends Phaser.Scene {
     this.add.rectangle(600, 400, 1200, 800, 0x000000, 0.5).setDepth(1);
 
     // Header
-    const headerBox = this.add.container(600, 75).setDepth(2);
-    const headerBg = this.add.rectangle(0, 0, 440, 56, 0x1e272e, 0.95);
+    const sceneData = this.sys.settings.data || {};
+    this.page = Number(sceneData.page) || 0;
+
+    const headerBox = this.add.container(600, 75).setDepth(2);    const headerBg = this.add.rectangle(0, 0, 440, 56, 0x1e272e, 0.95);
     headerBg.setStrokeStyle(4, 0xf1c40f, 1);
-    const headerTxt = this.add.text(0, 0, 'SELECT LEVEL', {
+    const headerTxt = this.add.text(0, 0, `SELECT LEVEL (${this.page + 1}/${Math.ceil(LEVEL_CONFIGS.length / 3)})`, {
       fontFamily: PIXEL_FONT,
       fontSize: '32px',
       fontStyle: 'bold',
@@ -1026,19 +1056,20 @@ class LevelSelectScene extends Phaser.Scene {
     const progress = getGameProgress();
     const unlockedLevel = progress.unlockedLevel || 1;
 
-    // Grid layout: 2 rows of 3 levels
-    const cardW = 280;
+    // 3 levels per page: left, right, bottom-centre. The middle of the screen stays empty.
+    const cardW = 300;
     const cardH = 190;
-    const startX = 300;
-    const spacingX = 300;
-    const startY = 230;
-    const spacingY = 225;
+    const slots = [
+      { x: 200, y: 330 },
+      { x: 1000, y: 330 },
+      { x: 600, y: 610 }
+    ];
+    const pageLevels = LEVEL_CONFIGS.slice(this.page * 3, this.page * 3 + 3);
 
-    LEVEL_CONFIGS.forEach((cfg, idx) => {
-      const col = idx % 3;
-      const row = Math.floor(idx / 3);
-      const cx = startX + col * spacingX;
-      const cy = startY + row * spacingY;
+    pageLevels.forEach((cfg, slotIdx) => {
+      const idx = LEVEL_CONFIGS.indexOf(cfg);
+      const cx = slots[slotIdx].x;
+      const cy = slots[slotIdx].y;
       const isUnlocked = cfg.level <= unlockedLevel;
       const starsEarned = progress.levelStars[cfg.level] || 0;
       const bestScore = progress.levelHighScores[cfg.level] || 0;
@@ -1152,8 +1183,23 @@ class LevelSelectScene extends Phaser.Scene {
       }
     });
 
+    // Page switch button (bottom-right corner)
+    const totalPages = Math.ceil(LEVEL_CONFIGS.length / 3);
+    if (totalPages > 1) {
+      const nextPage = (this.page + 1) % totalPages;
+      const nextStart = nextPage * 3 + 1;
+      const nextEnd = Math.min(LEVEL_CONFIGS.length, nextStart + 2);
+      const pageLabel = nextPage > this.page
+        ? `LEVELS ${nextStart}-${nextEnd} ▶`
+        : `◀ LEVELS ${nextStart}-${nextEnd}`;
+
+      createPixelButton(this, 1030, 740, 280, 56, pageLabel, () => {
+        this.scene.restart({ page: nextPage });
+      }, { bgColor: 0x2980b9, hoverColor: 0x3498db, borderColor: 0x1a5276, fontSize: '18px' });
+    }
+
     // Back to Menu Button
-    createPixelButton(this, 600, 715, 240, 52, '⬅ MAIN MENU', () => {
+    createPixelButton(this, 170, 740, 260, 56, '⬅ MAIN MENU', () => {
       this.scene.start('MenuScene');
     }, { bgColor: 0x555555, hoverColor: 0x777777, borderColor: 0x222222, fontSize: '18px' });
 
@@ -1846,11 +1892,11 @@ class GameScene extends Phaser.Scene {
     const overlay = this.add.rectangle(0, 0, 1200, 800, 0x000000, 0.75);
     overlay.setInteractive(); // Blocks clicks to background
 
-    const panelBg = this.add.rectangle(0, 0, 680, 520, 0x1e272e, 0.98);
+    const panelBg = this.add.rectangle(0, 0, 1100, 700, 0x1e272e, 0.98);
     panelBg.setStrokeStyle(4, 0xf1c40f, 1);
-    const panelShadow = this.add.rectangle(5, 5, 680, 520, 0x000000, 0.6);
+    const panelShadow = this.add.rectangle(5, 5, 1100, 700, 0x000000, 0.6);
 
-    const title = this.add.text(0, -215, 'GAME PAUSED', {
+    const title = this.add.text(0, -310, 'GAME PAUSED', {
       fontFamily: PIXEL_FONT,
       fontSize: '36px',
       fontStyle: 'bold',
@@ -1865,17 +1911,17 @@ class GameScene extends Phaser.Scene {
     const statusColor = isConn ? '#2ecc71' : '#e74c3c';
     const statusText = isConn ? `🟢 ESP CONNECTED (${window.espTracker.host})` : `🔴 ESP OFFLINE (${window.espTracker.host})`;
 
-    const trackerBox = this.add.rectangle(0, -110, 620, 110, 0x111111, 0.9);
+    const trackerBox = this.add.rectangle(0, -225, 620, 110, 0x111111, 0.9);
     trackerBox.setStrokeStyle(2, 0x555555, 1);
 
-    const trackerTitle = this.add.text(0, -145, '📡 ESP32 ULTRASONIC TRACKING STATUS', {
+    const trackerTitle = this.add.text(0, -260, '📡 ESP32 ULTRASONIC TRACKING STATUS', {
       fontFamily: PIXEL_FONT,
       fontSize: '15px',
       fontStyle: 'bold',
       color: '#bdc3c7'
     }).setOrigin(0.5);
 
-    const connLabel = this.add.text(-280, -118, statusText, {
+    const connLabel = this.add.text(-280, -233, statusText, {
       fontFamily: PIXEL_FONT,
       fontSize: '14px',
       fontStyle: 'bold',
@@ -1883,15 +1929,22 @@ class GameScene extends Phaser.Scene {
     });
 
     const raw = window.espTracker ? window.espTracker.raw : { xCm: 0, yCm: 0, confidence: 0, secOnline: false };
-    const teleLabel = this.add.text(-280, -90,
+    const teleLabel = this.add.text(-280, -205,
       `Pos: (${raw.xCm.toFixed(0)}cm, ${raw.yCm.toFixed(0)}cm) | Conf: ${(raw.confidence * 100).toFixed(0)}% | Sec Node: ${raw.secOnline ? 'ONLINE' : 'OFFLINE'}`, {
       fontFamily: PIXEL_FONT,
       fontSize: '13px',
       color: '#f1c40f'
     });
 
-    this.pauseModalContainer.add([overlay, panelShadow, panelBg, title, trackerBox, trackerTitle, connLabel, teleLabel]);
+    const centreHint = this.add.text(0, 0, 'MOVE TO A CORNER\nAND HOLD TO SELECT', {
+      fontFamily: PIXEL_FONT,
+      fontSize: '20px',
+      fontStyle: 'bold',
+      color: '#7f8c8d',
+      align: 'center'
+    }).setOrigin(0.5);
 
+    this.pauseModalContainer.add([overlay, panelShadow, panelBg, title, trackerBox, trackerTitle, connLabel, teleLabel, centreHint]);
     // Mode Toggle Button inside Pause Menu
     const updatePauseModeBtn = () => {
       if (modeBtn && modeBtn.btnData && modeBtn.btnData.label) {
@@ -1899,36 +1952,37 @@ class GameScene extends Phaser.Scene {
       }
     };
 
-    const modeBtn = createPixelButton(this, 600 - 150, -35 + 400, 290, 44, window.espTracker.getModeLabel(), () => {
+    const modeBtn = createPixelButton(this, 230, 640, 320, 56, window.espTracker.getModeLabel(), () => {
       window.espTracker.toggleMode();
       updatePauseModeBtn();
     }, { bgColor: 0x2980b9, hoverColor: 0x3498db, borderColor: 0x1a5276, fontSize: '15px', depth: 65 });
 
     // Mirror X Toggle Button
     const mirrorText = window.espTracker && window.espTracker.mirrorX ? 'MIRROR X: ON 🪞' : 'MIRROR X: OFF';
-    const mirrorBtn = createPixelButton(this, 600 + 150, -35 + 400, 260, 44, mirrorText, () => {
+    const mirrorBtn = createPixelButton(this, 970, 640, 320, 56, mirrorText, () => {
       const nextMirror = !(window.espTracker.mirrorX);
       window.espTracker.setMirrorX(nextMirror);
       mirrorBtn.btnData.label.setText(nextMirror ? 'MIRROR X: ON 🪞' : 'MIRROR X: OFF');
     }, { bgColor: 0x8e44ad, hoverColor: 0x9b59b6, borderColor: 0x5b2c6f, fontSize: '15px', depth: 65 });
 
     // Resume Button
-    const resumeBtn = createPixelButton(this, 600, 30 + 400, 320, 50, 'RESUME GAME ▶', () => {
+    const resumeBtn = createPixelButton(this, 230, 340, 320, 70, 'RESUME GAME ▶', () => {
       this.resumeGame();
     }, { bgColor: 0x27ae60, hoverColor: 0x2ecc71, borderColor: 0x145a32, depth: 65 });
 
     // Restart Button
-    const restartBtn = createPixelButton(this, 600, 95 + 400, 320, 50, 'RESTART LEVEL ↺', () => {
+    const restartBtn = createPixelButton(this, 970, 340, 320, 70, 'RESTART LEVEL ↺', () => {
       this.scene.start('GameScene', { mode: this.gameMode, levelIndex: this.levelIndex });
     }, { bgColor: 0xd35400, hoverColor: 0xe67e22, borderColor: 0x7e3100, depth: 65 });
 
     // Exit to Menu Button
-    const exitBtn = createPixelButton(this, 600, 160 + 400, 320, 50, this.gameMode === 'level' ? 'LEVEL SELECT ☰' : 'MAIN MENU ☰', () => {
+    const exitBtn = createPixelButton(this, 600, 720, 320, 50, this.gameMode === 'level' ? 'LEVEL SELECT ☰' : 'MAIN MENU ☰', () => {
       if (this.gameMode === 'level') {
         this.scene.start('LevelSelectScene');
       } else {
         this.scene.start('MenuScene');
       }
+
     }, { bgColor: 0x7f8c8d, hoverColor: 0x95a5a6, borderColor: 0x333333, depth: 65 });
 
     this.pauseModalContainer.buttons = [modeBtn, mirrorBtn, resumeBtn, restartBtn, exitBtn];
