@@ -391,6 +391,54 @@ function createPixelButton(scene, x, y, width, height, text, onClick, options = 
   return container;
 }
 
+// Shows a YES / NO popup before switching between body tracking and mouse mode
+function confirmModeSwitch(scene, onConfirm) {
+  if (scene.confirmOpen) return;
+  scene.confirmOpen = true;
+
+  const nextLabel = window.espTracker.mode === 'esp' ? 'MOUSE CONTROLS' : 'BODY TRACKING';
+  const parts = [];
+
+  const overlay = scene.add.rectangle(600, 400, 1200, 800, 0x000000, 0.8).setDepth(90);
+  overlay.setInteractive(); // blocks clicks to anything underneath
+  const panelBg = scene.add.rectangle(600, 400, 720, 340, 0x1e272e, 0.98).setDepth(91);
+  panelBg.setStrokeStyle(4, 0xf1c40f, 1);
+  const title = scene.add.text(600, 310, 'SWITCH MODE?', {
+    fontFamily: PIXEL_FONT, fontSize: '36px', fontStyle: 'bold',
+    color: '#f1c40f', stroke: '#000000', strokeThickness: 5
+  }).setOrigin(0.5).setDepth(92);
+  const sub = scene.add.text(600, 365, `Switch to ${nextLabel}?`, {
+    fontFamily: PIXEL_FONT, fontSize: '22px', fontStyle: 'bold',
+    color: '#ffffff', stroke: '#000000', strokeThickness: 3
+  }).setOrigin(0.5).setDepth(92);
+  parts.push(overlay, panelBg, title, sub);
+
+  const close = () => {
+    scene.time.delayedCall(0, () => {
+      parts.forEach(p => {
+        if (p.btnData) {
+          scene.registeredButtons = scene.registeredButtons.filter(b => b !== p.btnData);
+        }
+        p.destroy();
+      });
+      scene.confirmOpen = false;
+      syncSceneTargets(scene);
+    });
+  };
+
+  const yesBtn = createPixelButton(scene, 430, 460, 240, 64, 'YES ✔', () => {
+    close();
+    onConfirm();
+  }, { bgColor: 0x27ae60, hoverColor: 0x2ecc71, borderColor: 0x145a32, fontSize: '22px', depth: 95 });
+
+  const noBtn = createPixelButton(scene, 770, 460, 240, 64, 'NO ✖', () => {
+    close();
+  }, { bgColor: 0xc0392b, hoverColor: 0xe74c3c, borderColor: 0x7b241c, fontSize: '22px', depth: 95 });
+
+  parts.push(yesBtn, noBtn);
+  syncSceneTargets(scene);
+}
+
 function processSceneButtonDwell(scene, delta) {
   if (!scene.registeredButtons || !scene.cursor || !scene.cursor.shadow) return;
 
@@ -436,6 +484,14 @@ function processSceneButtonDwell(scene, delta) {
         // Ignore the cursor for 1 second after the screen opens
     if (btn.createdAt && performance.now() - btn.createdAt < 1000) {
       btn.dwellTime = 0;
+      return;
+    }
+
+      // While the confirm popup is open, only its buttons (depth 90+) can be selected
+    if (scene.confirmOpen && !(btn.container.depth >= 90)) {
+      btn.dwellTime = 0;
+      btn.isHovered = false;
+      if (btn.dwellFill) btn.dwellFill.setVisible(false);
       return;
     }
 
@@ -703,6 +759,10 @@ class MenuScene extends Phaser.Scene {
         fontSize: '19px'
   });
 
+       createPixelButton(this, 220, 500, 340, 80, '📡 CALIBRATE / WIFI', () => {
+      this.scene.start('CalibrationScene');
+    }, { bgColor: 0x16a085, hoverColor: 0x1abc9c, borderColor: 0x0b5345, fontSize: '19px' });
+
     // Mode Toggle Button (ESP Tracker vs Mouse)
     const updateMenuModeBtn = () => {
       if (this.modeBtn && this.modeBtn.btnData && this.modeBtn.btnData.label) {
@@ -711,8 +771,10 @@ class MenuScene extends Phaser.Scene {
     };
 
     this.modeBtn = createPixelButton(this, 600, 735, 360, 55, window.espTracker.getModeLabel(), () => {
-      window.espTracker.toggleMode();
-      updateMenuModeBtn();
+        confirmModeSwitch(this, () => {
+        window.espTracker.toggleMode();
+        updateMenuModeBtn();
+      });
     }, { bgColor: 0x2980b9, hoverColor: 0x3498db, borderColor: 0x1a5276, fontSize: '18px' });
 
     this.modeChangeCb = () => updateMenuModeBtn();
@@ -1232,6 +1294,209 @@ class LevelSelectScene extends Phaser.Scene {
 // ----------------------------------------------------
 // Gameplay Scene (Levels & Endless Modes)
 // ----------------------------------------------------
+class CalibrationScene extends Phaser.Scene {
+  constructor() {
+    super('CalibrationScene');
+  }
+
+  create() {
+    this.registeredButtons = [];
+    this.calibrated = false;
+    renderBackground(this);
+    this.cursor = createCustomCursor(this);
+    this.add.rectangle(600, 400, 1200, 800, 0x000000, 0.6).setDepth(1);
+
+    this.add.text(600, 45, 'CALIBRATION & SETUP', {
+      fontFamily: PIXEL_FONT,
+      fontSize: '36px',
+      fontStyle: 'bold',
+      color: '#f1c40f',
+      stroke: '#000000',
+      strokeThickness: 5
+    }).setOrigin(0.5).setDepth(3);
+
+    // Info panel (centre of the screen, corners left free for the circles)
+        // ---------- helpers ----------
+    const makeCard = (x, y, w, h, border) => {
+      this.add.rectangle(x + 5, y + 5, w, h, 0x000000, 0.6).setDepth(2);
+      const bg = this.add.rectangle(x, y, w, h, 0x16213e, 0.95).setDepth(2);
+      bg.setStrokeStyle(4, border, 1);
+    };
+    const makeBadge = (x, y, n, color) => {
+      const c = this.add.circle(x, y, 20, color).setDepth(3);
+      c.setStrokeStyle(3, 0x000000, 1);
+      this.add.text(x, y, n, {
+        fontFamily: PIXEL_FONT, fontSize: '22px', fontStyle: 'bold',
+        color: '#ffffff', stroke: '#000000', strokeThickness: 3
+      }).setOrigin(0.5).setDepth(4);
+    };
+    const makeHeading = (x, y, text) => {
+      this.add.text(x, y, text, {
+        fontFamily: PIXEL_FONT, fontSize: '22px', fontStyle: 'bold',
+        color: '#f1c40f', stroke: '#000000', strokeThickness: 4
+      }).setOrigin(0, 0.5).setDepth(3);
+    };
+    const smallLabel = {
+      fontFamily: PIXEL_FONT, fontSize: '13px', fontStyle: 'bold',
+      color: '#95a5a6', stroke: '#000000', strokeThickness: 2, align: 'center'
+    };
+    const valueStyle = {
+      fontFamily: PIXEL_FONT, fontSize: '15px', fontStyle: 'bold',
+      color: '#ffffff', stroke: '#000000', strokeThickness: 2, align: 'center', lineSpacing: 4
+    };
+
+    // ---------- CARD 1: WIFI ----------
+    makeCard(600, 190, 700, 160, 0x3498db);
+    makeBadge(285, 140, '1', 0x3498db);
+    makeHeading(318, 140, 'CONNECT TO THE TRACKER WIFI');
+
+    const pills = [
+      { x: 435, label: 'NETWORK', value: 'esp32 device' },
+      { x: 765, label: 'PASSWORD', value: 'password123' }
+    ];
+    pills.forEach(p => {
+      const pill = this.add.rectangle(p.x, 190, 300, 56, 0x0b1020, 1).setDepth(3);
+      pill.setStrokeStyle(2, 0x3498db, 1);
+      this.add.text(p.x, 176, p.label, smallLabel).setOrigin(0.5).setDepth(4);
+      this.add.text(p.x, 200, p.value, {
+        fontFamily: PIXEL_FONT, fontSize: '22px', fontStyle: 'bold',
+        color: '#7bed9f', stroke: '#000000', strokeThickness: 3
+      }).setOrigin(0.5).setDepth(4);
+    });
+
+    this.statusText = this.add.text(600, 248, '', {
+      fontFamily: PIXEL_FONT, fontSize: '16px', fontStyle: 'bold',
+      color: '#e74c3c', stroke: '#000000', strokeThickness: 3
+    }).setOrigin(0.5).setDepth(4);
+
+    // ---------- CARD 2: PLACEMENT ----------
+    makeCard(600, 420, 700, 190, 0xe67e22);
+    makeBadge(285, 345, '2', 0xe67e22);
+    makeHeading(318, 345, 'PLACEMENT & PLAY SPACE');
+
+    const tiles = [
+      { x: 395, icon: '📏', label: 'SENSOR HEIGHT', value: '0.6 - 1.8 m\n(2 - 6 ft)' },
+      { x: 600, icon: '🧍', label: 'STAND BACK', value: '1.4 m (1 player)\n1.8 m (2 players)' },
+      { x: 805, icon: '🧹', label: 'CLEAR SPACE', value: 'No chairs, bags\nor bystanders' }
+    ];
+    tiles.forEach(t => {
+      const tile = this.add.rectangle(t.x, 430, 210, 120, 0x0b1020, 1).setDepth(3);
+      tile.setStrokeStyle(2, 0xe67e22, 1);
+      this.add.text(t.x, 395, t.icon, { fontSize: '30px' }).setOrigin(0.5).setDepth(4);
+      this.add.text(t.x, 422, t.label, smallLabel).setOrigin(0.5).setDepth(4);
+      this.add.text(t.x, 452, t.value, valueStyle).setOrigin(0.5).setDepth(4);
+    });
+
+    // ---------- CARD 3: CALIBRATE ----------
+    makeCard(600, 590, 700, 140, 0x2ecc71);
+    makeBadge(285, 545, '3', 0x2ecc71);
+    makeHeading(318, 545, 'CALIBRATE');
+    this.add.text(600, 578, 'Reach all 4 corner circles with your hammer', {
+      fontFamily: PIXEL_FONT, fontSize: '15px', fontStyle: 'bold',
+      color: '#bdc3c7', stroke: '#000000', strokeThickness: 2
+    }).setOrigin(0.5).setDepth(3);
+
+    this.progressText = this.add.text(600, 622, 'CIRCLES TOUCHED: 0 / 4', {
+      fontFamily: PIXEL_FONT, fontSize: '26px', fontStyle: 'bold',
+      color: '#ffffff', stroke: '#000000', strokeThickness: 4
+    }).setOrigin(0.5).setDepth(4);
+
+    // Four corner circles
+    const spots = [
+      { x: 100, y: 130 }, { x: 1100, y: 130 },
+      { x: 100, y: 700 }, { x: 1100, y: 700 }
+    ];
+    this.circles = spots.map(pos => {
+      const ring = this.add.circle(pos.x, pos.y, 70, 0xc0392b, 0.35).setDepth(3);
+      ring.setStrokeStyle(6, 0xe74c3c, 1);
+      const label = this.add.text(pos.x, pos.y, 'TOUCH', {
+        fontFamily: PIXEL_FONT, fontSize: '18px', fontStyle: 'bold',
+        color: '#ffffff', stroke: '#000000', strokeThickness: 3
+      }).setOrigin(0.5).setDepth(4);
+      return { ring, label, x: pos.x, y: pos.y, r: 70, hold: 0, done: false };
+    });
+
+    // Buttons (bottom-centre)
+    createPixelButton(this, 430, 735, 250, 50, '⬅ MAIN MENU', () => {
+      this.scene.start('MenuScene');
+    }, { bgColor: 0x555555, hoverColor: 0x777777, borderColor: 0x222222, fontSize: '17px', depth: 5 });
+
+    this.doneBtn = createPixelButton(this, 770, 735, 250, 50, 'DONE ✔', () => {
+      this.scene.start('MenuScene');
+    }, { bgColor: 0x27ae60, hoverColor: 0x2ecc71, borderColor: 0x145a32, fontSize: '17px', depth: 5 });
+    this.doneBtn.setVisible(false);
+
+    this.input.on('pointerdown', () => {
+      triggerWhackAnimation(this, this.cursor);
+    });
+
+    this.events.once('shutdown', () => {
+      if (window.espTracker) window.espTracker.clearTargets();
+    });
+    syncSceneTargets(this);
+  }
+
+  update(time, delta) {
+    if (window.espTracker) {
+      window.espTracker.update(delta);
+    }
+    updateCustomCursor(this.input.activePointer, this.cursor, this);
+    processSceneButtonDwell(this, delta);
+
+    // WiFi / tracker status
+    const t = window.espTracker;
+    if (t && t.mode === 'mouse') {
+      this.statusText.setText('🖱️ MOUSE MODE - wifi not needed');
+      this.statusText.setColor('#f1c40f');
+    } else if (t && t.isConnected) {
+      this.statusText.setText('🟢 TRACKER CONNECTED');
+      this.statusText.setColor('#2ecc71');
+    } else {
+      this.statusText.setText('🔴 NOT CONNECTED - join the wifi above, then wait a few seconds');
+      this.statusText.setColor('#e74c3c');
+    }
+
+    // Corner circles: red -> yellow while touching -> green once touched
+    const cx = this.cursor.shadow.x;
+    const cy = this.cursor.shadow.y;
+    let touched = 0;
+
+    this.circles.forEach(c => {
+      if (!c.done) {
+        const inside = Phaser.Math.Distance.Between(cx, cy, c.x, c.y) < c.r;
+        if (inside) {
+          c.hold += delta;
+          c.ring.setFillStyle(0xf1c40f, 0.45);
+          c.ring.setStrokeStyle(6, 0xf1c40f, 1);
+          if (c.hold >= 400) {
+            c.done = true;
+            c.ring.setFillStyle(0x2ecc71, 0.55);
+            c.ring.setStrokeStyle(6, 0x2ecc71, 1);
+            c.label.setText('✔');
+            c.label.setFontSize('36px');
+          }
+        } else {
+          c.hold = 0;
+          c.ring.setFillStyle(0xc0392b, 0.35);
+          c.ring.setStrokeStyle(6, 0xe74c3c, 1);
+        }
+      }
+      if (c.done) touched++;
+    });
+
+    if (!this.calibrated) {
+      this.progressText.setText(`CIRCLES TOUCHED: ${touched} / 4`);
+      if (touched === 4) {
+        this.calibrated = true;
+        this.progressText.setText('CALIBRATED! ✔');
+        this.progressText.setColor('#2ecc71');
+        this.doneBtn.setVisible(true);
+        if (window.espTracker) window.espTracker.playWhackSound();
+      }
+    }
+  }
+}
+
 class GameScene extends Phaser.Scene {
   constructor() {
     super('GameScene');
@@ -1953,8 +2218,10 @@ class GameScene extends Phaser.Scene {
     };
 
     const modeBtn = createPixelButton(this, 230, 640, 320, 56, window.espTracker.getModeLabel(), () => {
-      window.espTracker.toggleMode();
-      updatePauseModeBtn();
+        confirmModeSwitch(this, () => {
+        window.espTracker.toggleMode();
+        updatePauseModeBtn();
+      });
     }, { bgColor: 0x2980b9, hoverColor: 0x3498db, borderColor: 0x1a5276, fontSize: '15px', depth: 65 });
 
     // Mirror X Toggle Button
@@ -2897,6 +3164,7 @@ const config = {
     InstructionsScene,
     HammerCustomiseScene,
     LevelSelectScene,
+    CalibrationScene,
     GameScene
   ]
 };
