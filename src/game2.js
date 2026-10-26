@@ -176,23 +176,26 @@ function setHammerStyle(scene, hammerKey) {
 function updateCustomCursor(pointer, cursorObj, scene) {
   if (!cursorObj || !cursorObj.hammer) return;
 
-  const isESP = window.espTracker && window.espTracker.mode === 'esp';
+  let targetX = 600;
+  let targetY = 400;
 
-  let targetX = pointer ? pointer.x : 600;
-  let targetY = pointer ? pointer.y : 400;
-
-  if (isESP) {
-    // If real ESP tracking data is streaming and detected, use ESP position
-    if (window.espTracker.isConnected && window.espTracker.raw.isDetected) {
+  if (window.espTracker && window.espTracker.currentScreenPos) {
+    if (window.espTracker.isConnected) {
       targetX = window.espTracker.currentScreenPos.x;
       targetY = window.espTracker.currentScreenPos.y;
+    } else if (pointer && (pointer.x !== 0 || pointer.y !== 0)) {
+      // Offline desktop testing: keep espTracker position aligned with pointer
+      window.espTracker.currentScreenPos.x = pointer.x;
+      window.espTracker.currentScreenPos.y = pointer.y;
+      targetX = pointer.x;
+      targetY = pointer.y;
     } else {
-      // In ESP mode while offline/testing on desktop, mouse drives the tracked position
-      targetX = pointer ? pointer.x : window.espTracker.currentScreenPos.x;
-      targetY = pointer ? pointer.y : window.espTracker.currentScreenPos.y;
-      window.espTracker.currentScreenPos.x = targetX;
-      window.espTracker.currentScreenPos.y = targetY;
+      targetX = window.espTracker.currentScreenPos.x;
+      targetY = window.espTracker.currentScreenPos.y;
     }
+  } else if (pointer) {
+    targetX = pointer.x;
+    targetY = pointer.y;
   }
 
   // Calculate movement velocity vector & angle
@@ -284,7 +287,7 @@ function triggerWhackAnimation(scene, cursorObj) {
 
 function renderBackground(scene, levelConfig = null) {
   let backgroundKey = 'backyard'; // default
-  
+
   if (levelConfig) {
     switch (levelConfig.level) {
       case 1:
@@ -307,7 +310,7 @@ function renderBackground(scene, levelConfig = null) {
         backgroundKey = 'backyard';
     }
   }
-  
+
   const bg = scene.add.image(0, 0, backgroundKey).setOrigin(0, 0);
   bg.setDisplaySize(1200, 800);
   bg.setDepth(0);
@@ -546,8 +549,8 @@ function syncSceneTargets(scene) {
   const targets = [];
   const sceneKey = scene.scene ? scene.scene.key : (scene.constructor ? scene.constructor.name : '');
 
-  if (sceneKey === 'MenuScene' || sceneKey === 'HammerCustomiseScene') {
-    // Collect active menu and customisation buttons
+  if (sceneKey === 'MenuScene' || sceneKey === 'HammerCustomiseScene' || sceneKey === 'InstructionsScene') {
+    // Collect active menu, instructions, and customisation buttons
     if (scene.registeredButtons) {
       scene.registeredButtons.forEach(btn => {
         if (btn.isDisabled || (btn.container && !btn.container.visible)) return;
@@ -610,17 +613,34 @@ function syncSceneTargets(scene) {
         });
       }
     } else {
-      // Active Gameplay: Mole holes + HUD pause button
-      // 1. Mole Holes (Target type 0 = TARGET_TYPE_HOLE)
-      if (scene.holes && scene.holes.length > 0) {
-        scene.holes.forEach((hole, idx) => {
-          targets.push({
-            x: hole.x,
-            y: hole.y,
-            r: 85, // Strike radius in screen pixels (~0.085 normalised)
-            t: 0,  // TARGET_TYPE_HOLE
-            label: `Hole ${idx + 1}`
-          });
+      // Active Gameplay: Active Moles / Bunny + HUD pause button
+      // 1. Active Moles (Target type 0 = TARGET_TYPE_HOLE)
+      const currentActiveMoles = (scene.isLevelFive && scene.isLevelFive())
+        ? (scene.activeMoles || [])
+        : (scene.activeMole ? [scene.activeMole] : []);
+
+      currentActiveMoles.forEach(mole => {
+        const idx = scene.moles ? scene.moles.indexOf(mole) : -1;
+        const targetX = (idx >= 0 && scene.holes && scene.holes[idx]) ? scene.holes[idx].x : mole.x;
+        const targetY = (idx >= 0 && scene.holes && scene.holes[idx]) ? scene.holes[idx].y : mole.y;
+        targets.push({
+          x: targetX,
+          y: targetY,
+          r: 85, // Strike radius in screen pixels
+          t: 0,  // TARGET_TYPE_HOLE
+          label: idx >= 0 ? `Mole ${idx + 1}` : 'ActiveMole'
+        });
+      });
+
+      // 2. Bunny included as active hole
+      if (scene.activeRabbit && scene.rabbitHoleIndex !== undefined && scene.rabbitHoleIndex >= 0 && scene.holes && scene.holes[scene.rabbitHoleIndex]) {
+        const rabbitHole = scene.holes[scene.rabbitHoleIndex];
+        targets.push({
+          x: rabbitHole.x,
+          y: rabbitHole.y,
+          r: 85, // Strike radius in screen pixels
+          t: 0,  // TARGET_TYPE_HOLE
+          label: `Bunny ${scene.rabbitHoleIndex + 1}`
         });
       }
 
@@ -753,11 +773,11 @@ class MenuScene extends Phaser.Scene {
     createPixelButton(this, 980, 640, 340, 80, '✦ INSTRUCTIONS ✦', () => {
       this.scene.start('InstructionsScene');
     }, {
-         bgColor: 0x34495e,
-         hoverColor: 0x5dade2,
-        borderColor: 0x1c2833,
-        fontSize: '19px'
-  });
+      bgColor: 0x34495e,
+      hoverColor: 0x5dade2,
+      borderColor: 0x1c2833,
+      fontSize: '19px'
+    });
 
        createPixelButton(this, 220, 500, 340, 80, '📡 CALIBRATE / WIFI', () => {
       this.scene.start('CalibrationScene');
@@ -824,11 +844,11 @@ class MenuScene extends Phaser.Scene {
   }
 }
 
-  // ----------------------------------------------------
-  // Instructions Scene
-  // ----------------------------------------------------
-  class InstructionsScene extends Phaser.Scene {
-    constructor() {
+// ----------------------------------------------------
+// Instructions Scene
+// ----------------------------------------------------
+class InstructionsScene extends Phaser.Scene {
+  constructor() {
     super('InstructionsScene');
   }
 
@@ -879,59 +899,59 @@ class MenuScene extends Phaser.Scene {
     // Instructions text
     // Instructions - two column layout
 
-  const leftInstructions = [
-    '🌙  YOUR QUEST',
-    'Strike the moles as they rise.',
-    'Every hit earns you points!',
-    '',
-    '🐰  WATCH THE RABBIT',
-    'A friendly rabbit may appear...',
-    'DO NOT hit the rabbit!',
-    '',
-    '❤️  THREE LIVES',
-    'You have 3 lives.',
-    'Miss too many moles and',
-    'your quest will end.'
+    const leftInstructions = [
+      '🌙  YOUR QUEST',
+      'Strike the moles as they rise.',
+      'Every hit earns you points!',
+      '',
+      '🐰  WATCH THE RABBIT',
+      'A friendly rabbit may appear...',
+      'DO NOT hit the rabbit!',
+      '',
+      '❤️  THREE LIVES',
+      'You have 3 lives.',
+      'Miss too many moles and',
+      'your quest will end.'
     ].join('\n');
 
-  const rightInstructions = [
-    '⏳  BE QUICK',
-    'The moles will not wait forever.',
-    'Hit them before they disappear!',
-    '',
-   '💣  BEWARE THE BOMB MOLE',
-   'A time bomb can appear at any time.',
-   'This will speed up the moles timer',
-   'Hit the mole quickly!',
-    '',
-    '✨  THE CHALLENGE',
-    'Hit as many moles as you can,',
-    'build your score,',
-    'become the WHACK MASTER!'
-  ].join('\n');
+    const rightInstructions = [
+      '⏳  BE QUICK',
+      'The moles will not wait forever.',
+      'Hit them before they disappear!',
+      '',
+      '💣  BEWARE THE BOMB MOLE',
+      'A time bomb can appear at any time.',
+      'This will speed up the moles timer',
+      'Hit the mole quickly!',
+      '',
+      '✨  THE CHALLENGE',
+      'Hit as many moles as you can,',
+      'build your score,',
+      'become the WHACK MASTER!'
+    ].join('\n');
 
-  const leftText = this.add.text(-390, -155, leftInstructions, {
-    fontFamily: PIXEL_FONT,
-    fontSize: '16px',
-    fontStyle: 'bold',
-    color: '#ffffff',
-    lineSpacing: 7,
-    stroke: '#000000',
-    strokeThickness: 2,
-    align: 'left',
-    wordWrap: { width: 350 }
-  }).setOrigin(0, 0);
+    const leftText = this.add.text(-390, -155, leftInstructions, {
+      fontFamily: PIXEL_FONT,
+      fontSize: '16px',
+      fontStyle: 'bold',
+      color: '#ffffff',
+      lineSpacing: 7,
+      stroke: '#000000',
+      strokeThickness: 2,
+      align: 'left',
+      wordWrap: { width: 350 }
+    }).setOrigin(0, 0);
 
-  const rightText = this.add.text(40, -155, rightInstructions, {
-    fontFamily: PIXEL_FONT,
-    fontSize: '16px',
-    fontStyle: 'bold',
-    color: '#ffffff',
-    lineSpacing: 7,
-    stroke: '#000000',
-    strokeThickness: 2,
-    align: 'left',
-    wordWrap: { width: 350 }
+    const rightText = this.add.text(40, -155, rightInstructions, {
+      fontFamily: PIXEL_FONT,
+      fontSize: '16px',
+      fontStyle: 'bold',
+      color: '#ffffff',
+      lineSpacing: 7,
+      stroke: '#000000',
+      strokeThickness: 2,
+      align: 'left',
+      wordWrap: { width: 350 }
     }).setOrigin(0, 0);
 
     panel.add([leftText, rightText]);
@@ -1006,7 +1026,7 @@ class HammerCustomiseScene extends Phaser.Scene {
 
     const panel = this.add.container(600, 370).setDepth(2);
     const panelShadow = this.add.rectangle(6, 6, 900, 650, 0x000000, 0.7);
-    const panelBg = this.add.rectangle(0, 0, 900, 650, 0x16213e, 0.96); 
+    const panelBg = this.add.rectangle(0, 0, 900, 650, 0x16213e, 0.96);
     const title = this.add.text(0, -175, 'CUSTOMISE HAMMER', {
       fontFamily: PIXEL_FONT,
       fontSize: '34px',
@@ -1602,26 +1622,26 @@ class GameScene extends Phaser.Scene {
 
     // Skip to next level button
     this.skipLevelButton = createPixelButton(
-    this,
+      this,
       600,
       755,
       300,
       45,
-   '✦ NEXT LEVEL ✦',
-    () => {
-    this.skipToNextLevel();
-    },
-    {
-      bgColor: 0x27ae60,
-      hoverColor: 0x2ecc71,
-      borderColor: 0x145a32,
-      fontSize: '17px',
-      depth: 25
-    }
-  );
+      '✦ NEXT LEVEL ✦',
+      () => {
+        this.skipToNextLevel();
+      },
+      {
+        bgColor: 0x27ae60,
+        hoverColor: 0x2ecc71,
+        borderColor: 0x145a32,
+        fontSize: '17px',
+        depth: 25
+      }
+    );
 
-  // Hidden until the target score is reached
-  this.skipLevelButton.setVisible(false);
+    // Hidden until the target score is reached
+    this.skipLevelButton.setVisible(false);
 
     // Level 60s Countdown Timer
     if (this.gameMode === 'level') {
@@ -1727,7 +1747,7 @@ class GameScene extends Phaser.Scene {
     // Hands-Free Dwell Whacking on Active Mole (ESP Mode only)
     // ----------------------------------------------------
     const isESPMode = window.espTracker && window.espTracker.mode === 'esp';
-    if (isESPMode && (this.activeMole || this.activeRabbit) && this.canWhack && !this.isPaused && !this.isDeadZonePaused && !this.isCountingDown && !this.gameOver && !this.gameComplete) {
+    if (isESPMode && (this.activeMole || (this.isLevelFive() && this.activeMoles.length > 0)) && this.canWhack && !this.isPaused && !this.isDeadZonePaused && !this.isCountingDown && !this.gameOver && !this.gameComplete) {
       const strikeX = this.cursor.shadow.x;
       const strikeY = this.cursor.shadow.y;
       const targets = [];
@@ -1736,7 +1756,6 @@ class GameScene extends Phaser.Scene {
       } else if (this.activeMole) {
         targets.push(this.activeMole);
       }
-      if (this.activeRabbit) targets.push(this.rabbit);
       const target = targets
         .map(candidate => ({ candidate, distance: Phaser.Math.Distance.Between(strikeX, strikeY, candidate.x, candidate.y) }))
         .filter(item => item.distance < getHitRadius(item.candidate === this.rabbit))
@@ -1749,7 +1768,7 @@ class GameScene extends Phaser.Scene {
           }
         this.dwellTime += delta;
         this.dwellTargetMole = target.candidate;
-        const dwellDuration = target.candidate === this.rabbit ? 500 : 240;
+        const dwellDuration = 240;
 
         if (this.dwellTime >= dwellDuration) {
           // Ring completed: IMMEDIATELY wipe ring before triggering whack
@@ -2055,7 +2074,7 @@ class GameScene extends Phaser.Scene {
         strokeThickness: 3
       });
 
-      this.livesText = this.add.text(730, 23, 'LIVES: ❤️ ❤️ ❤️', { 
+      this.livesText = this.add.text(730, 23, 'LIVES: ❤️ ❤️ ❤️', {
         fontFamily: PIXEL_FONT,
         fontSize: '17px',
         fontStyle: 'bold',
@@ -2106,18 +2125,18 @@ class GameScene extends Phaser.Scene {
     const remainingLives = Math.max(0, this.maxMissedMoles - this.missedMoles);
     let heartsStr = 'LIVES: ';
     for (let i = 0; i < this.maxMissedMoles; i++) {
-      heartsStr += i < remainingLives ? '❤️ ' : '🖤 '; 
+      heartsStr += i < remainingLives ? '❤️ ' : '🖤 ';
     }
 
     if (this.gameMode === 'level') {
       this.scoreText.setText(`SCORE: ${this.score}`);
 
-    if (this.score >= this.levelConfig.targetScore) {
-      this.scoreText.setColor('#2ecc71');
+      if (this.score >= this.levelConfig.targetScore) {
+        this.scoreText.setColor('#2ecc71');
 
-      // Show skip button once target is reached
-    if (this.skipLevelButton && this.levelIndex + 1 < LEVEL_CONFIGS.length) {
-      this.skipLevelButton.setVisible(true);
+        // Show skip button once target is reached
+        if (this.skipLevelButton && this.levelIndex + 1 < LEVEL_CONFIGS.length) {
+          this.skipLevelButton.setVisible(true);
         }
       }
 
@@ -2386,6 +2405,7 @@ class GameScene extends Phaser.Scene {
     this.activeMoles.push(selectedMole);
     this.activeMole = this.activeMoles[0];
     this.scheduleLevelFiveMoleSpawn();
+    syncSceneTargets(this);
 
     const timerBar = this.createMoleTimerBar();
     timerBar.bar.width = timerBar.maxWidth;
@@ -2484,6 +2504,7 @@ class GameScene extends Phaser.Scene {
     selectedMole.x = hole.x;
     selectedMole.y = hole.y + 80;
     selectedMole.setVisible(true);
+    syncSceneTargets(this);
 
     const moleDuration = this.getMoleDuration();
 
@@ -2497,85 +2518,85 @@ class GameScene extends Phaser.Scene {
     this.timerBar.container.y = hole.y - 60;
 
     this.timerTween = this.tweens.add({
-    targets: this.timerBar.bar,
-    width: 0 ,
-    duration: moleDuration,
-    ease: 'Linear',
+      targets: this.timerBar.bar,
+      width: 0,
+      duration: moleDuration,
+      ease: 'Linear',
 
-    onUpdate: (tween) => {
-      // Get the percentage of time that has passed
-      const progress = tween.progress;
+      onUpdate: (tween) => {
+        // Get the percentage of time that has passed
+        const progress = tween.progress;
 
-      // GREEN -> YELLOW during the first half
-      if (progress < 0.5) {
-        const colourProgress = progress / 0.5;
+        // GREEN -> YELLOW during the first half
+        if (progress < 0.5) {
+          const colourProgress = progress / 0.5;
 
-        const red = Math.round(85 + (255 - 85) * colourProgress);
-        const green = 204;
-        const blue = Math.round(85 - (85 * colourProgress));
+          const red = Math.round(85 + (255 - 85) * colourProgress);
+          const green = 204;
+          const blue = Math.round(85 - (85 * colourProgress));
 
-        const colour = (red << 16) | (green << 8) | blue;
+          const colour = (red << 16) | (green << 8) | blue;
 
-        this.timerBar.bar.setFillStyle(colour);
+          this.timerBar.bar.setFillStyle(colour);
 
-      // YELLOW -> RED during the second half
-      } else {
-        const colourProgress = (progress - 0.5) / 0.5;
+          // YELLOW -> RED during the second half
+        } else {
+          const colourProgress = (progress - 0.5) / 0.5;
 
-       const red = 255;
-      const green = Math.round(204 - (204 * colourProgress));
-       const blue = 0;
+          const red = 255;
+          const green = Math.round(204 - (204 * colourProgress));
+          const blue = 0;
 
-       const colour = (red << 16) | (green << 8) | blue;
+          const colour = (red << 16) | (green << 8) | blue;
 
-       this.timerBar.bar.setFillStyle(colour);
-     }
-    // Shake mole during the final 0.7 seconds
-     if (tween.progress >= 0.77 && !selectedMole.isShaking) {
-       selectedMole.isShaking = true;
+          this.timerBar.bar.setFillStyle(colour);
+        }
+        // Shake mole during the final 0.7 seconds
+        if (tween.progress >= 0.77 && !selectedMole.isShaking) {
+          selectedMole.isShaking = true;
 
-       this.tweens.add({
-         targets: selectedMole,
-         x: hole.x + 8,
-         duration: 60,
-         yoyo: true,
-         repeat: -1,
-         ease: 'Sine.easeInOut'
-       });
-     }
-    },
+          this.tweens.add({
+            targets: selectedMole,
+            x: hole.x + 8,
+            duration: 60,
+            yoyo: true,
+            repeat: -1,
+            ease: 'Sine.easeInOut'
+          });
+        }
+      },
 
-    onComplete: () => {
-      this.timerTween = null;
+      onComplete: () => {
+        this.timerTween = null;
 
-      // Stop mole shaking
-      this.tweens.killTweensOf(selectedMole);
-      selectedMole.x = hole.x;
-      selectedMole.isShaking = false;  
+        // Stop mole shaking
+        this.tweens.killTweensOf(selectedMole);
+        selectedMole.x = hole.x;
+        selectedMole.isShaking = false;
 
-      // Reset timer colour for the next mole
-      this.timerBar.bar.setFillStyle(0x55cc55);
+        // Reset timer colour for the next mole
+        this.timerBar.bar.setFillStyle(0x55cc55);
 
-     if (
-        this.activeMole === selectedMole &&
-        !this.gameOver &&
-       !this.gameComplete
-     ) {
-       selectedMole.setTexture('missed-mole');
-       this.missedMoles++;
-       this.updateHUD();
-        this.deactivateMole(selectedMole, false);
+        if (
+          this.activeMole === selectedMole &&
+          !this.gameOver &&
+          !this.gameComplete
+        ) {
+          selectedMole.setTexture('missed-mole');
+          this.missedMoles++;
+          this.updateHUD();
+          this.deactivateMole(selectedMole, false);
 
-        if (this.missedMoles >= this.maxMissedMoles) {
-         if (this.gameMode === 'level') {
-           this.handleLevelLostLives();
-         } else {
-            this.handleEndlessGameOver();
+          if (this.missedMoles >= this.maxMissedMoles) {
+            if (this.gameMode === 'level') {
+              this.handleLevelLostLives();
+            } else {
+              this.handleEndlessGameOver();
+            }
           }
-       }
-     }
-    }
-  });
+        }
+      }
+    });
 
     if (this.bombPending) {
       this.assignBombToActiveMole();
@@ -2609,6 +2630,7 @@ class GameScene extends Phaser.Scene {
     this.rabbit.x = hole.x;
     this.rabbit.y = hole.y + 80;
     this.rabbit.setVisible(true);
+    syncSceneTargets(this);
 
     this.tweens.add({
       targets: this.rabbit,
@@ -2629,6 +2651,7 @@ class GameScene extends Phaser.Scene {
               this.score += 20; // score ++ 3 if rabbit is not whacked
               this.activeRabbit = false;
               this.rabbitHoleIndex = -1;
+              syncSceneTargets(this);
             }
           });
         });
@@ -2655,6 +2678,7 @@ class GameScene extends Phaser.Scene {
 
     this.activeMoles = this.activeMoles.filter(activeMole => activeMole !== mole);
     this.activeMole = this.activeMoles[0] || null;
+    syncSceneTargets(this);
     if (this.dwellTargetMole === mole) {
       this.clearDwellRing();
       this.dwellTime = 0;
@@ -2691,6 +2715,7 @@ class GameScene extends Phaser.Scene {
     this.clearDwellRing();
     this.dwellTime = 0;
     this.dwellTargetMole = null;
+    syncSceneTargets(this);
 
     if (this.timerTween) {
       this.timerTween.stop();
@@ -2736,6 +2761,7 @@ class GameScene extends Phaser.Scene {
         this.rabbit.setTexture('crying-rabbit');
         this.activeRabbit = false;
         this.rabbitHoleIndex = -1;
+        syncSceneTargets(this);
         this.handleRabbitWhacked();
         return;
       }
@@ -2867,7 +2893,7 @@ class GameScene extends Phaser.Scene {
       this.score < this.levelConfig.targetScore ||
       this.levelIndex + 1 >= LEVEL_CONFIGS.length
     ) {
-    return;
+      return;
     }
 
     this.gameComplete = true;
@@ -2888,12 +2914,12 @@ class GameScene extends Phaser.Scene {
     const star3 = this.missedMoles === 0;
 
     const totalStars =
-     (star1 ? 1 : 0) +
-     (star2 ? 1 : 0) +
+      (star1 ? 1 : 0) +
+      (star2 ? 1 : 0) +
       (star3 ? 1 : 0);
 
     if (currentLevel >= progress.unlockedLevel) {
-     progress.unlockedLevel = currentLevel + 1;
+      progress.unlockedLevel = currentLevel + 1;
     }
 
     const existingStars = progress.levelStars[currentLevel] || 0;
@@ -2906,8 +2932,8 @@ class GameScene extends Phaser.Scene {
 
     // Start the next level immediately
     this.scene.start('GameScene', {
-       mode: 'level',
-       levelIndex: this.levelIndex + 1
+      mode: 'level',
+      levelIndex: this.levelIndex + 1
     });
   }
   handleLevelTimeUp() {
@@ -3017,7 +3043,7 @@ class GameScene extends Phaser.Scene {
         panel.add(descTxt);
       });
 
-      const bonusCount = Math.max(0, this.score - this.levelConfig.targetScore)/10;
+      const bonusCount = Math.max(0, this.score - this.levelConfig.targetScore) / 10;
       const scoreSummary = this.add.text(0, 55,
         `WHACKED: ${this.score} | TARGET: ${this.levelConfig.targetScore}\nBONUS: ${bonusCount} | MISSES: ${this.missedMoles}`, {
         fontFamily: PIXEL_FONT,
