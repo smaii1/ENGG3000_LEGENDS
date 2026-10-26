@@ -1,0 +1,35 @@
+{
+  "name": "whack-a-mole",
+  "version": "1.0.0",
+  "description": "Whack-a-Mole desktop game",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win nsis"
+  },
+  "devDependencies": {
+    "electron": "^44.9.3",
+    "electron-builder": "^26.0.0"
+  },
+  "build": {
+    "appId": "com.example.whackamole",
+    "productName": "Whack-a-Mole",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "index.html",
+      "assets/**/*",
+      "*.js",
+      "package.json"
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}
