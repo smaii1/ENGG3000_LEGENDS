@@ -2,7 +2,7 @@
 
 **Group:** Group 2 Legends  
 **Unit:** ENGG3000 — SPINE Engineering Project  
-**Team:** Akshara, Fin, Sima
+**Team:** Akshara, Fin, Sima, Lith, Issa
 
 ## Overview
 
@@ -121,6 +121,7 @@ The current prototype includes:
 - Game-over screen
 - Level completion screen
 - Pause menu
+- Soundtrack
 - Restart functionality
 - Multiple game modes
 - Pixel-art style UI
