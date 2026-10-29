@@ -21,6 +21,7 @@
       "main.js",
       "index.html",
       "assets/**/*",
+      "sounds/**/*",
       "src/**/*",
       "node_modules/phaser/dist/phaser.min.js",
       "*.js",

@@ -14,7 +14,7 @@ class ESPTrackerService {
     this.isConnecting = false;
     this.reconnectTimer = null;
     this.mode = localStorage.getItem('esp_tracker_mode') || 'esp'; // 'esp' | 'mouse'
-    this.mirrorX = localStorage.getItem('esp_tracker_mirror_x') === 'true'; // configurable mirror
+    this.mirrorY = localStorage.getItem('esp_tracker_mirror_y') === 'true'; // configurable mirror
 
     // Screen dimensions
     this.screenWidth = 1200;
@@ -180,10 +180,10 @@ class ESPTrackerService {
     return this.mode === 'esp' ? '🏃 MODE: BODY TRACKING' : '🖱️ MODE: MOUSE CONTROLS';
   }
 
-  setMirrorX(mirror) {
-    this.mirrorX = Boolean(mirror);
-    localStorage.setItem('esp_tracker_mirror_x', this.mirrorX);
-    this.emit('mirrorChange', { mirrorX: this.mirrorX });
+  setMirrorY(mirror) {
+    this.mirrorY = Boolean(mirror);
+    localStorage.setItem('esp_tracker_mirror_y', this.mirrorY);
+    this.emit('mirrorChange', { mirrorY: this.mirrorY });
 
     // Re-evaluate target coordinates with updated mirror setting
     if (this.lastScreenTargets && this.lastScreenTargets.length > 0) {
@@ -198,27 +198,23 @@ class ESPTrackerService {
     const clampedNormX = Math.max(0.0, Math.min(1.0, normX));
     const clampedNormY = Math.max(0.0, Math.min(1.0, normY));
 
-    // Mirror X if requested (player facing screen)
-    const effectiveNormX = this.mirrorX ? (1.0 - clampedNormX) : clampedNormX;
+    // Mirror Y if requested
+    const effectiveNormY = this.mirrorY ? (1.0 - clampedNormY) : clampedNormY;
 
     // Map to active screen area (2% to 98% horizontally, 5% to 95% vertically)
-    const screenX = (0.02 + effectiveNormX * 0.96) * this.screenWidth;
-    const screenY = (0.05 + clampedNormY * 0.90) * this.screenHeight;
+    const screenX = (0.02 + clampedNormX * 0.96) * this.screenWidth;
+    const screenY = (0.05 + effectiveNormY * 0.90) * this.screenHeight;
 
     return { x: screenX, y: screenY };
   }
 
   screenToNorm(screenX, screenY) {
-    // Inverse horizontal mapping:
-    let effectiveNormX = ((screenX / this.screenWidth) - 0.02) / 0.96;
-    effectiveNormX = Math.max(0.0, Math.min(1.0, effectiveNormX));
+    const normX = ((screenX / this.screenWidth) - 0.02) / 0.96;
 
-    // Flip back if mirrored
-    const normX = this.mirrorX ? (1.0 - effectiveNormX) : effectiveNormX;
-
-    // Inverse vertical mapping:
-    let normY = ((screenY / this.screenHeight) - 0.05) / 0.90;
-    normY = Math.max(0.0, Math.min(1.0, normY));
+    // Invert the vertical mapping, then undo the optional mirror.
+    let effectiveNormY = ((screenY / this.screenHeight) - 0.05) / 0.90;
+    effectiveNormY = Math.max(0.0, Math.min(1.0, effectiveNormY));
+    const normY = this.mirrorY ? (1.0 - effectiveNormY) : effectiveNormY;
 
     return {
       x: parseFloat(Math.max(0.0, Math.min(1.0, normX)).toFixed(4)),
