@@ -23,7 +23,7 @@
       "assets/**/*",
       "sounds/**/*",
       "src/**/*",
-      "node_modules/phaser/dist/phaser.min.js",
+      "vendor/**/*",
       "*.js",
       "package.json"
     ],
