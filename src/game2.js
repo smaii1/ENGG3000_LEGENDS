@@ -813,10 +813,13 @@ class BootScene extends Phaser.Scene {
     this.load.image('rabbit', 'assets/rabbit.png');
     this.load.image('crying-rabbit', 'assets/crying-rabbit.png');
     this.load.image('bomb', 'assets/bomb.png');
-    //molecorp assets
+    // Load additional mole variants for levels 5 and 6
     this.load.image('evil-mole', 'assets/evil-mole.png');
     this.load.image('evil-mole-whacked', 'assets/evil-mole-whacked.png');
     this.load.image('evil-mole-missed', 'assets/evil-mole-missed.png');
+    this.load.image('mech-mole', 'assets/mech-mole.png');
+    this.load.image('mech-mole-whacked', 'assets/mech-mole-whacked.png');
+    this.load.image('mech-mole-missed', 'assets/mech-mole-missed.png');
   }
 
   create() {
@@ -1731,7 +1734,8 @@ class GameScene extends Phaser.Scene {
       const hiddenPosition = getMolePosition(hole, hole.moleAngle, 80);
       const mole = this.add.image(hiddenPosition.x, hiddenPosition.y, this.getMoleTexture());
       hole.isSmallCritterPosition = pos.small === true;
-      mole.setScale(hole.isSmallCritterPosition ? 3 : level === 4 ? 3.5 : 4);
+      const moleScale = hole.isSmallCritterPosition ? 3 : level === 4 ? 3.5 : 4;
+      mole.setScale(level === 5 ? moleScale / 2 : moleScale);
       mole.setAngle(hole.moleAngle);
       mole.setVisible(false);
       mole.setDepth(6);
@@ -2511,10 +2515,12 @@ class GameScene extends Phaser.Scene {
   }
 
   getMoleTexture(state = 'normal') {
-    const evilMole = this.isLevelFive();
-    if (state === 'whacked') return evilMole ? 'evil-mole-whacked' : 'whacked-mole';
-    if (state === 'missed') return evilMole ? 'evil-mole-missed' : 'missed-mole';
-    return evilMole ? 'evil-mole' : 'mole';
+    const moleType = this.isLevelFive()
+      ? this.levelConfig.level === 5 ? 'mech-mole' : 'evil-mole'
+      : null;
+    if (state === 'whacked') return moleType ? `${moleType}-whacked` : 'whacked-mole';
+    if (state === 'missed') return moleType ? `${moleType}-missed` : 'missed-mole';
+    return moleType || 'mole';
   }
 
   scheduleLevelFiveMoleSpawn() {
