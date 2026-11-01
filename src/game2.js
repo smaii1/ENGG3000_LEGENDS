@@ -1524,16 +1524,18 @@ class CalibrationScene extends Phaser.Scene {
     makeHeading(318, 345, 'PLACEMENT & PLAY SPACE');
 
     const tiles = [
-      { x: 395, icon: '📏', label: 'SENSOR HEIGHT', value: '0.6 - 1.8 m\n(2 - 6 ft)' },
-      { x: 600, icon: '🧍', label: 'STAND BACK', value: '1.4 m (1 player)\n1.8 m (2 players)' },
-      { x: 805, icon: '🧹', label: 'CLEAR SPACE', value: 'No chairs, bags\nor bystanders' }
+      { x: 360, icon: '📏', label: 'SENSOR HEIGHT', value: 'At least 90 cm\noff the ground' },
+      { x: 520, icon: '🧍', label: 'ONE PLAYER', value: 'Stand between\nboth sensors' },
+      { x: 680, icon: '📍', label: 'DISTANCE', value: 'About 20 cm\nfrom sensors' },
+      { x: 840, icon: '🚫', label: 'KEEP CLEAR', value: 'No bystanders\n+ objects nearby' }
     ];
     tiles.forEach(t => {
-      const tile = this.add.rectangle(t.x, 430, 210, 120, 0x0b1020, 1).setDepth(3);
+
+    const tile = this.add.rectangle(t.x, 430, 150, 120, 0x0b1020, 1).setDepth(3);
       tile.setStrokeStyle(2, 0xe67e22, 1);
-      this.add.text(t.x, 395, t.icon, { fontSize: '30px' }).setOrigin(0.5).setDepth(4);
-      this.add.text(t.x, 422, t.label, smallLabel).setOrigin(0.5).setDepth(4);
-      this.add.text(t.x, 452, t.value, valueStyle).setOrigin(0.5).setDepth(4);
+      this.add.text(t.x, 392, t.icon, { fontSize: '28px' }).setOrigin(0.5).setDepth(4);
+      this.add.text(t.x, 418, t.label, smallLabel).setOrigin(0.5).setDepth(4);
+      this.add.text(t.x, 450, t.value, valueStyle).setOrigin(0.5).setDepth(4);
     });
 
     // ---------- CARD 3: CALIBRATE ----------
