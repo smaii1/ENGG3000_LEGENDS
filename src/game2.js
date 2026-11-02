@@ -6,8 +6,8 @@ const LEVEL_CONFIGS = [
   { level: 2, name: "Level 2: Vegetable Patch", targetScore: 140, moleTime: 5800, spawnDelay: 800, holes: 3 },
   { level: 3, name: "Level 3: Grassy Meadow", targetScore: 180, moleTime: 5200, spawnDelay: 700, holes: 4 },
   { level: 4, name: "Level 4: Deep Woods", targetScore: 220, moleTime: 4600, spawnDelay: 600, holes: 5 },
-  { level: 5, name: "Level 5: Molecorp Ltd", targetScore: 260, moleTime: 4600, spawnDelay: 1200, holes: 5 }, //same moleTime as lvl4 but increased spawndelay because there can 2moles up at a time
-  { level: 6, name: "Level 6: Haunted Moleheim", targetScore: 300, moleTime: 4000, spawnDelay: 1000, holes: 6 }
+  { level: 5, name: "Level 5: Molecorp Ltd", targetScore: 260, moleTime: 4800, spawnDelay: 1200, holes: 5 }, //increased moletime to 4900 to make it easier 
+  { level: 6, name: "Level 6: Haunted Moleheim", targetScore: 300, moleTime: 4500, spawnDelay: 1000, holes: 6 } //increased moletime to 4500 to make it easier
 ];
 
 function getHolePositions(count = 6, level = null) {
@@ -1930,7 +1930,7 @@ class GameScene extends Phaser.Scene {
         this.dwellTargetMole = target.candidate;
         const moleDwellDuration = 240;
         const dwellDuration = target.candidate === this.rabbit
-          ? moleDwellDuration * 2
+          ? moleDwellDuration * 1.5
           : moleDwellDuration;
 
         if (this.dwellTime >= dwellDuration) {
