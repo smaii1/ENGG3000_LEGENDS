@@ -51,6 +51,10 @@ class ESPTrackerService {
       timestamp: 0
     };
 
+    // Latest battery report: { l, r }, each { p, mv } with p = -1 on USB, r = null if the right
+    // module is silent. Null until the tracker reports one, and again once it disconnects.
+    this.battery = null;
+
     this.currentScreenPos = { x: 600, y: 400 };
     this.targetScreenPos = { x: 600, y: 400 };
 
@@ -131,6 +135,7 @@ class ESPTrackerService {
         const wasConnected = this.isConnected;
         this.isConnected = false;
         this.isConnecting = false;
+        this.battery = null;
         if (this.inDeadZone) {
           this.inDeadZone = false;
           this.raw.inDeadZone = false;
@@ -369,7 +374,9 @@ class ESPTrackerService {
   handleMessage(dataStr) {
     try {
       const data = JSON.parse(dataStr);
-      if (data.type === 'pos') {
+      if (data.type === 'batt') {
+        this.battery = { l: data.l, r: data.r };
+      } else if (data.type === 'pos') {
         this.raw.xCm = data.x !== undefined ? data.x : this.raw.xCm;
         this.raw.yCm = data.y !== undefined ? data.y : this.raw.yCm;
         this.raw.confidence = data.c !== undefined ? data.c : 1.0;

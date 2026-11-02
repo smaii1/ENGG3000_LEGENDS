@@ -1463,9 +1463,13 @@ class SetupScene extends Phaser.Scene {
     this.statusText.setText(status.text);
     this.statusText.setColor(status.color);
     const levelsLabel = getGameProgress().unlockedLevel >= LEVEL_CONFIGS.length ? 'ALL LEVELS UNLOCKED' : 'U: UNLOCK ALL LEVELS';
+    const batteryLine = tracker.battery
+      ? `\nBATTERY: ${formatBatteryDetail('LEFT', tracker.battery.l)}   |   ${formatBatteryDetail('RIGHT', tracker.battery.r)}`
+      : '';
     this.detailText.setText(
       `PLAY SPACE: ${tracker.calibration ? 'CALIBRATED' : 'DEFAULT'}   |   STAY ${Math.round(tracker.deadZoneOffsetY)} CM FROM THE SENSORS\n`
       + `M: MIRROR Y ${tracker.mirrorY ? 'ON' : 'OFF'}   |   ${levelsLabel}`
+      + batteryLine
     );
   }
 }
@@ -3355,6 +3359,93 @@ class GameScene extends Phaser.Scene {
 }
 
 // ----------------------------------------------------
+// Battery Overlay
+// ----------------------------------------------------
+// Stays running above every other scene, tucked into the bottom-right corner clear of the
+// holes and buttons. Hidden until the tracker reports, so mouse-only play never sees it.
+const BATTERY_LOW_PERCENT = 20;
+const BATTERY_CRITICAL_PERCENT = 10;
+const BATTERY_ICON_W = 24;
+const BATTERY_ICON_H = 12;
+const BATTERY_PULSE_MS = 600;
+
+function describeBattery(module) {
+  if (!module) return { text: '--', color: 0x7f8c8d, level: 0 };
+  if (module.p < 0) return { text: 'USB', color: 0x7f8c8d, level: 0 };
+
+  let color = 0x2ecc71;
+  if (module.p <= BATTERY_CRITICAL_PERCENT) color = 0xe74c3c;
+  else if (module.p <= BATTERY_LOW_PERCENT) color = 0xf1c40f;
+  return { text: `${module.p}%`, color, level: module.p / 100 };
+}
+
+function formatBatteryDetail(name, module) {
+  const state = describeBattery(module);
+  return module && module.p >= 0
+    ? `${name} ${state.text} (${(module.mv / 1000).toFixed(2)} V)`
+    : `${name} ${state.text}`;
+}
+
+class BatteryOverlayScene extends Phaser.Scene {
+  constructor() {
+    super({ key: 'BatteryOverlayScene', active: true });
+  }
+
+  create() {
+    this.panel = this.add.container(1098, 776).setVisible(false);
+
+    const background = this.add.rectangle(0, 0, 188, 28, 0x1e272e, 0.62);
+    background.setStrokeStyle(2, 0x111111, 0.6);
+    this.panel.add(background);
+
+    this.leftGauge = this.createGauge(-86, 'L');
+    this.rightGauge = this.createGauge(6, 'R');
+  }
+
+  createGauge(x, label) {
+    const name = this.add.text(x, 0, label, {
+      fontFamily: PIXEL_FONT, fontSize: '14px', fontStyle: 'bold', color: '#bdc3c7'
+    }).setOrigin(0, 0.5);
+
+    const iconX = x + 14;
+    const shell = this.add.rectangle(iconX, 0, BATTERY_ICON_W, BATTERY_ICON_H).setOrigin(0, 0.5);
+    shell.setStrokeStyle(2, 0xbdc3c7, 1);
+    const terminal = this.add.rectangle(iconX + BATTERY_ICON_W + 1, 0, 3, 6, 0xbdc3c7).setOrigin(0, 0.5);
+    const fill = this.add.rectangle(iconX + 2, 0, BATTERY_ICON_W - 4, BATTERY_ICON_H - 4, 0x2ecc71).setOrigin(0, 0.5);
+
+    const value = this.add.text(iconX + BATTERY_ICON_W + 8, 0, '', {
+      fontFamily: PIXEL_FONT, fontSize: '14px', fontStyle: 'bold', color: '#ffffff'
+    }).setOrigin(0, 0.5);
+
+    this.panel.add([name, shell, terminal, fill, value]);
+    return { fill, value };
+  }
+
+  renderGauge(gauge, module, time) {
+    const state = describeBattery(module);
+    gauge.value.setText(state.text);
+    gauge.fill.setFillStyle(state.color);
+    gauge.fill.scaleX = state.level;
+
+    // The bar is only a sliver when low, so the number carries the warning
+    const isLow = module && module.p >= 0 && module.p <= BATTERY_LOW_PERCENT;
+    gauge.value.setColor(isLow ? Phaser.Display.Color.IntegerToColor(state.color).rgba : '#ffffff');
+
+    const isCritical = module && module.p >= 0 && module.p <= BATTERY_CRITICAL_PERCENT;
+    gauge.fill.setAlpha(isCritical ? 0.55 + 0.45 * Math.sin(time / BATTERY_PULSE_MS) : 1);
+  }
+
+  update(time) {
+    const battery = window.espTracker && window.espTracker.battery;
+    this.panel.setVisible(Boolean(battery));
+    if (!battery) return;
+
+    this.renderGauge(this.leftGauge, battery.l, time);
+    this.renderGauge(this.rightGauge, battery.r, time);
+  }
+}
+
+// ----------------------------------------------------
 // Phaser Game Configuration
 // ----------------------------------------------------
 const config = {
@@ -3381,7 +3472,8 @@ const config = {
     LevelSelectScene,
     SetupScene,
     CalibrationScene,
-    GameScene
+    GameScene,
+    BatteryOverlayScene
   ]
 };
 
