@@ -6,7 +6,7 @@ const LEVEL_CONFIGS = [
   { level: 2, name: "Level 2: Vegetable Patch", targetScore: 140, moleTime: 5800, spawnDelay: 800, holes: 3 },
   { level: 3, name: "Level 3: Grassy Meadow", targetScore: 180, moleTime: 5200, spawnDelay: 700, holes: 4 },
   { level: 4, name: "Level 4: Deep Woods", targetScore: 220, moleTime: 4600, spawnDelay: 600, holes: 5 },
-  { level: 5, name: "Level 5: Molecorp Ltd", targetScore: 260, moleTime: 4600, spawnDelay: 1200, holes: 6 }, //same moleTime as lvl4 but increased spawndelay because there can 2moles up at a time
+  { level: 5, name: "Level 5: Molecorp Ltd", targetScore: 260, moleTime: 4600, spawnDelay: 1200, holes: 5 }, //same moleTime as lvl4 but increased spawndelay because there can 2moles up at a time
   { level: 6, name: "Level 6: Haunted Moleheim", targetScore: 300, moleTime: 4000, spawnDelay: 1000, holes: 6 }
 ];
 
@@ -98,11 +98,25 @@ function getMolePosition(hole, angle, offset) {
 
 const PROGRESS_KEY = 'whack_a_mole_progress_v1';
 const PIXEL_FONT = '"Courier New", Courier, monospace';
+const LEVELS_PER_PAGE = 2;
 
 const HIT_RADIUS_MOUSE = 85;
-const HIT_RADIUS_ESP = 135;      
+const HIT_RADIUS_ESP = 100;      // about where the hammer shadow starts to touch the mole
 const RABBIT_RADIUS = 80;         // stays small so a big radius doesn't cause accidental rabbit hits
 const HAMMER_SIZE_BOOST = 1.1;   // hammer size multiplier (1.0 = original size)
+
+// Body-tracked screens use a 2x2 button grid. Centres are at least 45cm apart in the play space,
+// so the aim assist has a neutral gap between buttons and the cursor can't flip between them.
+const UI_LEFT = 330;
+const UI_RIGHT = 870;
+const UI_TOP = 340;
+const UI_BOTTOM = 570;
+const UI_BTN_W = 300;
+const UI_BTN_H = 90;
+
+const DWELL_SELECT_MS = 900;
+const DWELL_EXIT_PAD = 40;    // Once a button is filling, the cursor can stray this far (px)...
+const DWELL_GRACE_MS = 300;   // ...or leave for this long, without losing progress
 
 function getHitRadius(isRabbit = false) {
   if (isRabbit) return RABBIT_RADIUS;
@@ -208,11 +222,11 @@ function updateCustomCursor(pointer, cursorObj, scene) {
   let targetY = 400;
 
   if (window.espTracker && window.espTracker.currentScreenPos) {
-    if (window.espTracker.isConnected) {
+    if (window.espTracker.mode === 'esp' && window.espTracker.isConnected) {
       targetX = window.espTracker.currentScreenPos.x;
       targetY = window.espTracker.currentScreenPos.y;
     } else if (pointer && (pointer.x !== 0 || pointer.y !== 0)) {
-      // Offline desktop testing: keep espTracker position aligned with pointer
+      // Mouse mode or offline desktop testing: keep espTracker position aligned with pointer
       window.espTracker.currentScreenPos.x = pointer.x;
       window.espTracker.currentScreenPos.y = pointer.y;
       targetX = pointer.x;
@@ -232,10 +246,8 @@ function updateCustomCursor(pointer, cursorObj, scene) {
     && !scene.isPaused
     && !scene.gameOver
     && !scene.gameComplete;
-  const overPauseButton = targetX >= 1065 && targetX <= 1155
-    && targetY >= 19 && targetY <= 53;
 
-  if (isActiveBodyTracking && targetY < 62 && !overPauseButton) {
+  if (isActiveBodyTracking && targetY < 62) {
     targetY = 62;
   }
 
@@ -506,7 +518,7 @@ function confirmModeSwitch(scene, onConfirm) {
 
   const overlay = scene.add.rectangle(600, 400, 1200, 800, 0x000000, 0.8).setDepth(90);
   overlay.setInteractive(); // blocks clicks to anything underneath
-  const panelBg = scene.add.rectangle(600, 400, 720, 340, 0x1e272e, 0.98).setDepth(91);
+  const panelBg = scene.add.rectangle(600, 400, 900, 340, 0x1e272e, 0.98).setDepth(91);
   panelBg.setStrokeStyle(4, 0xf1c40f, 1);
   const title = scene.add.text(600, 310, 'SWITCH MODE?', {
     fontFamily: PIXEL_FONT, fontSize: '36px', fontStyle: 'bold',
@@ -531,17 +543,39 @@ function confirmModeSwitch(scene, onConfirm) {
     });
   };
 
-  const yesBtn = createPixelButton(scene, 430, 460, 240, 64, 'YES ✔', () => {
+  const yesBtn = createPixelButton(scene, UI_LEFT, 470, UI_BTN_W, UI_BTN_H, 'YES ✔', () => {
     close();
     onConfirm();
   }, { bgColor: 0x27ae60, hoverColor: 0x2ecc71, borderColor: 0x145a32, fontSize: '22px', depth: 95 });
 
-  const noBtn = createPixelButton(scene, 770, 460, 240, 64, 'NO ✖', () => {
+  const noBtn = createPixelButton(scene, UI_RIGHT, 470, UI_BTN_W, UI_BTN_H, 'NO ✖', () => {
     close();
   }, { bgColor: 0xc0392b, hoverColor: 0xe74c3c, borderColor: 0x7b241c, fontSize: '22px', depth: 95 });
 
   parts.push(yesBtn, noBtn);
   syncSceneTargets(scene);
+}
+
+// A button only counts while nothing is covering it
+function isButtonSelectable(scene, btn) {
+  if (btn.isDisabled || !btn.container.visible) return false;
+  if (scene.confirmOpen) return btn.container.depth >= 90;
+  if (scene.isPaused) return btn.container.depth >= 60;
+  if (scene.gameOver || scene.gameComplete) return btn.container.depth >= 50;
+  return true;
+}
+
+function resetButtonDwell(btn) {
+  btn.dwellTime = 0;
+  btn.outsideTime = 0;
+  if (btn.isHovered) {
+    btn.isHovered = false;
+    btn.bg.setFillStyle(btn.bgColor);
+  }
+  if (btn.dwellFill) {
+    btn.dwellFill.width = 0;
+    btn.dwellFill.setVisible(false);
+  }
 }
 
 function processSceneButtonDwell(scene, delta) {
@@ -550,92 +584,60 @@ function processSceneButtonDwell(scene, delta) {
   // Only use dwell button selection when in ESP Body Tracking mode
   const isESPMode = window.espTracker && window.espTracker.mode === 'esp' && !scene.cursor.usingMouse;
   if (!isESPMode) {
-    scene.registeredButtons.forEach(btn => {
-      if (btn.dwellFill && btn.dwellFill.visible) {
-        btn.dwellTime = 0;
-        btn.dwellFill.width = 0;
-        btn.dwellFill.setVisible(false);
-      }
-    });
+    scene.registeredButtons.forEach(resetButtonDwell);
     return;
   }
 
   const curX = scene.cursor.shadow.x;
   const curY = scene.cursor.shadow.y;
+  let selected = null;
 
   scene.registeredButtons.forEach(btn => {
-      if (btn.isDisabled || !btn.container.visible) {
-      btn.dwellTime = 0;
-      if (btn.dwellFill) btn.dwellFill.setVisible(false);
+    if (!isButtonSelectable(scene, btn)) {
+      btn.armed = false;
+      resetButtonDwell(btn);
       return;
     }
 
-    // While paused, only the pause-menu buttons (depth 60+) can be selected
-    if (scene.isPaused && !(btn.container.depth >= 60)) {
-      btn.dwellTime = 0;
-      btn.isHovered = false;
-      if (btn.dwellFill) btn.dwellFill.setVisible(false);
-      return;
-    }
-
-    // While paused, only the pause-menu buttons (depth 60+) can be selected
-    if (scene.isPaused && !(btn.container.depth >= 60)) {
-      btn.dwellTime = 0;
-      btn.isHovered = false;
-      if (btn.dwellFill) btn.dwellFill.setVisible(false);
-      return;
-    }
-
-        // Ignore the cursor for 1 second after the screen opens
-    if (btn.createdAt && performance.now() - btn.createdAt < 1000) {
-      btn.dwellTime = 0;
-      return;
-    }
-
-      // While the confirm popup is open, only its buttons (depth 90+) can be selected
-    if (scene.confirmOpen && !(btn.container.depth >= 90)) {
-      btn.dwellTime = 0;
-      btn.isHovered = false;
-      if (btn.dwellFill) btn.dwellFill.setVisible(false);
-      return;
-    }
-
-    const halfW = btn.width / 2;
-    const halfH = btn.height / 2;
+    const pad = btn.dwellTime > 0 ? DWELL_EXIT_PAD : 0;
+    const halfW = btn.width / 2 + pad;
+    const halfH = btn.height / 2 + pad;
     const isInside = (curX >= btn.x - halfW && curX <= btn.x + halfW &&
       curY >= btn.y - halfH && curY <= btn.y + halfH);
 
+    // The cursor must leave a button before it can fire, so one that appears underneath
+    // the player can't be selected by accident
+    if (!btn.armed) {
+      btn.armed = !isInside;
+      return;
+    }
+
+    // Ignore the cursor for 1 second after the screen opens
+    if (btn.createdAt && performance.now() - btn.createdAt < 1000) return;
+
     if (isInside) {
+      btn.outsideTime = 0;
       btn.isHovered = true;
       btn.bg.setFillStyle(btn.hoverColor);
       btn.dwellTime += delta;
       if (btn.dwellFill) {
         btn.dwellFill.setVisible(true);
-        const progress = Math.min(1.0, btn.dwellTime / 900); // 900ms dwell activation
+        const progress = Math.min(1.0, btn.dwellTime / DWELL_SELECT_MS);
         btn.dwellFill.width = (btn.width - 8) * progress;
       }
-
-      if (btn.dwellTime >= 900) {
-        btn.dwellTime = 0;
-        if (btn.dwellFill) {
-          btn.dwellFill.width = 0;
-          btn.dwellFill.setVisible(false);
-        }
-        triggerWhackAnimation(scene, scene.cursor);
-        btn.onClick();
-      }
-    } else {
-      if (btn.isHovered) {
-        btn.isHovered = false;
-        btn.bg.setFillStyle(btn.bgColor);
-        btn.dwellTime = 0;
-        if (btn.dwellFill) {
-          btn.dwellFill.width = 0;
-          btn.dwellFill.setVisible(false);
-        }
-      }
+      if (btn.dwellTime >= DWELL_SELECT_MS) selected = btn;
+    } else if (btn.dwellTime > 0) {
+      btn.outsideTime += delta;
+      if (btn.outsideTime > DWELL_GRACE_MS) resetButtonDwell(btn);
     }
   });
+
+  if (selected) {
+    resetButtonDwell(selected);
+    selected.armed = false;
+    triggerWhackAnimation(scene, scene.cursor);
+    selected.onClick();
+  }
 }
 
 // ----------------------------------------------------
@@ -650,118 +652,39 @@ function syncSceneTargets(scene) {
 
   const targets = [];
   const sceneKey = scene.scene ? scene.scene.key : (scene.constructor ? scene.constructor.name : '');
+  const isPlaying = sceneKey === 'GameScene' && !scene.isPaused && !scene.gameOver && !scene.gameComplete;
 
-  if (sceneKey === 'MenuScene' || sceneKey === 'HammerCustomiseScene' || sceneKey === 'InstructionsScene') {
-    // Collect active menu, instructions, and customisation buttons
-    if (scene.registeredButtons) {
-      scene.registeredButtons.forEach(btn => {
-        if (btn.isDisabled || (btn.container && !btn.container.visible)) return;
-        targets.push({
-          x: btn.x,
-          y: btn.y,
-          r: Math.max(btn.width, btn.height) * 0.45,
-          t: 1, // TARGET_TYPE_BUTTON
-          label: (btn.label && btn.label.text) ? btn.label.text : 'Button'
-        });
+  if (isPlaying) {
+    // Active Moles (Target type 0 = TARGET_TYPE_HOLE). The rabbit is left out: the aim assist
+    // must never pull the player onto something they are meant to avoid.
+    const currentActiveMoles = (scene.isLevelFive && scene.isLevelFive())
+      ? (scene.activeMoles || [])
+      : (scene.activeMole ? [scene.activeMole] : []);
+
+    currentActiveMoles.forEach(mole => {
+      const idx = scene.moles ? scene.moles.indexOf(mole) : -1;
+      const targetX = (idx >= 0 && scene.holes && scene.holes[idx]) ? scene.holes[idx].x : mole.x;
+      const targetY = (idx >= 0 && scene.holes && scene.holes[idx]) ? scene.holes[idx].y : mole.y;
+      targets.push({
+        x: targetX,
+        y: targetY,
+        r: 85, // Strike radius in screen pixels
+        t: 0,  // TARGET_TYPE_HOLE
+        label: idx >= 0 ? `Mole ${idx + 1}` : 'ActiveMole'
       });
-    }
-  } else if (sceneKey === 'LevelSelectScene') {
-    // Collect unlocked level cards & back button
-    if (scene.registeredButtons) {
-      scene.registeredButtons.forEach(btn => {
-        if (btn.isDisabled || (btn.container && !btn.container.visible)) return;
-        targets.push({
-          x: btn.x,
-          y: btn.y,
-          r: Math.max(btn.width, btn.height) * 0.35,
-          t: 1, // TARGET_TYPE_BUTTON
-          label: (btn.label && btn.label.text) ? btn.label.text : 'LevelCard'
-        });
+    });
+  } else if (scene.registeredButtons) {
+    // Menus and overlays: whichever buttons are selectable right now
+    scene.registeredButtons.forEach(btn => {
+      if (!isButtonSelectable(scene, btn)) return;
+      targets.push({
+        x: btn.x,
+        y: btn.y,
+        r: Math.max(btn.width, btn.height) * 0.45,
+        t: 1, // TARGET_TYPE_BUTTON
+        label: (btn.label && btn.label.text) ? btn.label.text : 'Button'
       });
-    }
-  } else if (sceneKey === 'GameScene') {
-    if (scene.isPaused) {
-      // While paused, only pause modal buttons are active targets
-      if (scene.registeredButtons) {
-        scene.registeredButtons.forEach(btn => {
-          if (btn.isDisabled || (btn.container && !btn.container.visible)) return;
-          const isPauseBtn = scene.pauseModalContainer && scene.pauseModalContainer.buttons &&
-            scene.pauseModalContainer.buttons.some(b => b.btnData === btn);
-          if (isPauseBtn || (btn.container && btn.container.depth >= 60)) {
-            targets.push({
-              x: btn.x,
-              y: btn.y,
-              r: Math.max(btn.width, btn.height) * 0.45,
-              t: 1, // TARGET_TYPE_BUTTON
-              label: (btn.label && btn.label.text) ? btn.label.text : 'PauseBtn'
-            });
-          }
-        });
-      }
-    } else if (scene.gameOver || scene.gameComplete) {
-      // Game Over or Victory: only overlay action buttons
-      if (scene.registeredButtons) {
-        scene.registeredButtons.forEach(btn => {
-          if (btn.isDisabled || (btn.container && !btn.container.visible)) return;
-          if (btn.container && btn.container.depth >= 50) {
-            targets.push({
-              x: btn.x,
-              y: btn.y,
-              r: Math.max(btn.width, btn.height) * 0.45,
-              t: 1, // TARGET_TYPE_BUTTON
-              label: (btn.label && btn.label.text) ? btn.label.text : 'OverlayBtn'
-            });
-          }
-        });
-      }
-    } else {
-      // Active Gameplay: Active Moles / Bunny + HUD pause button
-      // 1. Active Moles (Target type 0 = TARGET_TYPE_HOLE)
-      const currentActiveMoles = (scene.isLevelFive && scene.isLevelFive())
-        ? (scene.activeMoles || [])
-        : (scene.activeMole ? [scene.activeMole] : []);
-
-      currentActiveMoles.forEach(mole => {
-        const idx = scene.moles ? scene.moles.indexOf(mole) : -1;
-        const targetX = (idx >= 0 && scene.holes && scene.holes[idx]) ? scene.holes[idx].x : mole.x;
-        const targetY = (idx >= 0 && scene.holes && scene.holes[idx]) ? scene.holes[idx].y : mole.y;
-        targets.push({
-          x: targetX,
-          y: targetY,
-          r: 85, // Strike radius in screen pixels
-          t: 0,  // TARGET_TYPE_HOLE
-          label: idx >= 0 ? `Mole ${idx + 1}` : 'ActiveMole'
-        });
-      });
-
-      // 2. Bunny included as active hole
-      if (scene.activeRabbit && scene.rabbitHoleIndex !== undefined && scene.rabbitHoleIndex >= 0 && scene.holes && scene.holes[scene.rabbitHoleIndex]) {
-        const rabbitHole = scene.holes[scene.rabbitHoleIndex];
-        targets.push({
-          x: rabbitHole.x,
-          y: rabbitHole.y,
-          r: 85, // Strike radius in screen pixels
-          t: 0,  // TARGET_TYPE_HOLE
-          label: `Bunny ${scene.rabbitHoleIndex + 1}`
-        });
-      }
-
-      // 2. HUD interactive buttons (e.g. Pause badge at top right)
-      if (scene.registeredButtons) {
-        scene.registeredButtons.forEach(btn => {
-          if (btn.isDisabled || (btn.container && !btn.container.visible)) return;
-          if (!btn.container || btn.container.depth < 50) {
-            targets.push({
-              x: btn.x,
-              y: btn.y,
-              r: Math.max(btn.width, btn.height) * 0.5,
-              t: 1, // TARGET_TYPE_BUTTON
-              label: (btn.label && btn.label.text) ? btn.label.text : 'HUD'
-            });
-          }
-        });
-      }
-    }
+    });
   }
 
   // Attach updateTargets method on scene for runtime modifications
@@ -773,6 +696,14 @@ function syncSceneTargets(scene) {
   } else {
     window.espTracker.clearTargets();
   }
+}
+
+function getTrackerStatus() {
+  const tracker = window.espTracker;
+  if (tracker.mode === 'mouse') return { text: '🖱️ MOUSE MODE', color: '#f1c40f' };
+  if (!tracker.isConnected) return { text: '🔴 TRACKER NOT CONNECTED - SEE SETUP', color: '#e74c3c' };
+  if (!tracker.raw.isDetected) return { text: '🟡 TRACKER CONNECTED - NO PLAYER DETECTED', color: '#f1c40f' };
+  return { text: '🟢 TRACKER CONNECTED - PLAYER DETECTED', color: '#2ecc71' };
 }
 
 // ----------------------------------------------------
@@ -883,19 +814,19 @@ class MenuScene extends Phaser.Scene {
     });
 
     // Buttons
-    createPixelButton(this, 220, 360, 340, 80, '⭐ LEVELS MODE', () => {
+    createPixelButton(this, UI_LEFT, UI_TOP, UI_BTN_W, UI_BTN_H, '⭐ LEVELS MODE', () => {
       this.scene.start('LevelSelectScene');
     }, { bgColor: 0x27ae60, hoverColor: 0x2ecc71, borderColor: 0x145a32, fontSize: '24px' });
 
-    createPixelButton(this, 980, 360, 340, 80, '⚡ ENDLESS MODE', () => {
+    createPixelButton(this, UI_RIGHT, UI_TOP, UI_BTN_W, UI_BTN_H, '⚡ ENDLESS MODE', () => {
       this.scene.start('GameScene', { mode: 'endless' });
     }, { bgColor: 0xd35400, hoverColor: 0xe67e22, borderColor: 0x7e3100, fontSize: '24px' });
 
-    createPixelButton(this, 220, 640, 340, 80, 'CUSTOMISE HAMMER', () => {
-      this.scene.start('HammerCustomiseScene');
-    }, { bgColor: 0x8e44ad, hoverColor: 0x9b59b6, borderColor: 0x5b2c6f, fontSize: '19px' });
+    createPixelButton(this, UI_LEFT, UI_BOTTOM, UI_BTN_W, UI_BTN_H, '⚙ SETUP', () => {
+      this.scene.start('SetupScene');
+    }, { bgColor: 0x16a085, hoverColor: 0x1abc9c, borderColor: 0x0b5345, fontSize: '24px' });
 
-    createPixelButton(this, 980, 640, 340, 80, '✦ INSTRUCTIONS ✦', () => {
+    createPixelButton(this, UI_RIGHT, UI_BOTTOM, UI_BTN_W, UI_BTN_H, '✦ INSTRUCTIONS ✦', () => {
       this.scene.start('InstructionsScene');
     }, {
       bgColor: 0x34495e,
@@ -904,41 +835,27 @@ class MenuScene extends Phaser.Scene {
       fontSize: '19px'
     });
 
-       createPixelButton(this, 220, 500, 340, 80, '📡 CALIBRATE / WIFI', () => {
-      this.scene.start('CalibrationScene');
-    }, { bgColor: 0x16a085, hoverColor: 0x1abc9c, borderColor: 0x0b5345, fontSize: '19px' });
-
-    // Mode Toggle Button (ESP Tracker vs Mouse)
-    const updateMenuModeBtn = () => {
-      if (this.modeBtn && this.modeBtn.btnData && this.modeBtn.btnData.label) {
-        this.modeBtn.btnData.label.setText(window.espTracker.getModeLabel());
-      }
-    };
-
-    this.modeBtn = createPixelButton(this, 600, 735, 360, 55, window.espTracker.getModeLabel(), () => {
-        confirmModeSwitch(this, () => {
-        window.espTracker.toggleMode();
-        updateMenuModeBtn();
-      });
-    }, { bgColor: 0x2980b9, hoverColor: 0x3498db, borderColor: 0x1a5276, fontSize: '18px' });
-
-    this.modeChangeCb = () => updateMenuModeBtn();
-    window.espTracker.on('modeChange', this.modeChangeCb);
-
     this.mirrorChangeCb = () => syncSceneTargets(this);
     if (window.espTracker) {
       window.espTracker.on('mirrorChange', this.mirrorChangeCb);
     }
 
     this.events.on('shutdown', () => {
-      if (this.modeChangeCb && window.espTracker) window.espTracker.off('modeChange', this.modeChangeCb);
       if (this.mirrorChangeCb && window.espTracker) window.espTracker.off('mirrorChange', this.mirrorChangeCb);
       if (window.espTracker) window.espTracker.clearTargets();
     });
 
     // Tracker Status Hint Bar at bottom
+    this.statusText = this.add.text(600, 690, '', {
+      fontFamily: PIXEL_FONT,
+      fontSize: '18px',
+      fontStyle: 'bold',
+      stroke: '#000000',
+      strokeThickness: 4
+    }).setOrigin(0.5).setDepth(3);
+
     const progress = getGameProgress();
-    const bestBox = this.add.container(1020, 440).setDepth(3);
+    const bestBox = this.add.container(UI_RIGHT, 415).setDepth(3);
     const bestText = this.add.text(0, 0, `BEST: ${progress.endlessHighScore}`, {
       fontFamily: PIXEL_FONT,
       fontSize: '16px',
@@ -948,7 +865,7 @@ class MenuScene extends Phaser.Scene {
       strokeThickness: 2
     }).setOrigin(0.5);
     const textBounds = bestText.getBounds();
-    const bestBg = this.add.rectangle(-40, 0, textBounds.width + 100, textBounds.height + 20, 0x111111, 0.85);
+    const bestBg = this.add.rectangle(0, 0, textBounds.width + 40, textBounds.height + 16, 0x111111, 0.85);
     bestBg.setStrokeStyle(2, 0xffffff, 0.3);
     bestBox.add([bestBg, bestText]);
 
@@ -966,6 +883,10 @@ class MenuScene extends Phaser.Scene {
     }
     updateCustomCursor(this.input.activePointer, this.cursor, this);
     processSceneButtonDwell(this, delta);
+
+    const status = getTrackerStatus();
+    this.statusText.setText(status.text);
+    this.statusText.setColor(status.color);
   }
 }
 
@@ -1026,18 +947,18 @@ class InstructionsScene extends Phaser.Scene {
     // Instructions - two column layout
 
     const leftInstructions = [
-      '🌙  YOUR QUEST',
-      'Strike the moles as they rise.',
-      'Every hit earns you points!',
+      '🔨  HOW TO WHACK',
+      'Walk to a mole and stay on it.',
+      'When the ring fills, it is hit!',
       '',
       '🐰  WATCH THE RABBIT',
       'A friendly rabbit may appear...',
-      'DO NOT hit the rabbit!',
+      'Hitting it costs you a life!',
       '',
       '❤️  THREE LIVES',
       'You have 3 lives.',
-      'Miss too many moles and',
-      'your quest will end.'
+      'Lose them all and your',
+      'quest will end.'
     ].join('\n');
 
     const rightInstructions = [
@@ -1082,23 +1003,14 @@ class InstructionsScene extends Phaser.Scene {
 
     panel.add([leftText, rightText]);
 
-    // Decorative stars
-    const stars = this.add.text(0, 290, '✦   ✧   ✦   ✧   ✦', {
-      fontFamily: PIXEL_FONT,
-      fontSize: '24px',
-      color: '#f1c40f'
-    }).setOrigin(0.5);
-
-    panel.add(stars);
-
     // Back button
-    createPixelButton(this, 600, 745, 240, 52, '⬅ BACK TO MENU', () => {
+    createPixelButton(this, 600, 660, UI_BTN_W, 80, '⬅ BACK TO MENU', () => {
       this.scene.start('MenuScene');
     }, {
       bgColor: 0x555555,
       hoverColor: 0x777777,
       borderColor: 0x222222,
-      fontSize: '17px',
+      fontSize: '19px',
       depth: 3
     });
 
@@ -1154,7 +1066,7 @@ class HammerCustomiseScene extends Phaser.Scene {
     const panel = this.add.container(600, 370).setDepth(2);
     const panelShadow = this.add.rectangle(6, 6, 900, 650, 0x000000, 0.7);
     const panelBg = this.add.rectangle(0, 0, 900, 650, 0x16213e, 0.96);
-    const title = this.add.text(0, -175, 'CUSTOMISE HAMMER', {
+    const title = this.add.text(0, -285, 'CUSTOMISE HAMMER', {
       fontFamily: PIXEL_FONT,
       fontSize: '34px',
       fontStyle: 'bold',
@@ -1162,7 +1074,7 @@ class HammerCustomiseScene extends Phaser.Scene {
       stroke: '#000000',
       strokeThickness: 5
     }).setOrigin(0.5);
-    const subtitle = this.add.text(0, -125, 'SELECT YOUR HAMMER STYLE', {
+    const subtitle = this.add.text(0, -235, 'SELECT YOUR HAMMER STYLE', {
       fontFamily: PIXEL_FONT,
       fontSize: '18px',
       fontStyle: 'bold',
@@ -1174,6 +1086,7 @@ class HammerCustomiseScene extends Phaser.Scene {
 
     const currentKey = getHammerOption(getGameProgress().hammerStyle).key;
     const pickerButtons = [];
+    const pickerSpots = [{ x: UI_LEFT, y: 270 }, { x: UI_RIGHT, y: 270 }, { x: UI_LEFT, y: 520 }];
     const updateSelection = () => {
       const selectedKey = getHammerOption(getGameProgress().hammerStyle).key;
       pickerButtons.forEach(button => {
@@ -1183,9 +1096,9 @@ class HammerCustomiseScene extends Phaser.Scene {
     };
 
     HAMMER_OPTIONS.forEach((option, index) => {
-      const pickerButton = createPixelButton(this, 360 + index * 240, 430, 190, 145, option.name, () => {
+      const pickerButton = createPixelButton(this, pickerSpots[index].x, pickerSpots[index].y, UI_BTN_W, 170, option.name, () => {
         setHammerStyle(this, option.key);
-        this.scene.start('MenuScene');
+        this.scene.start('SetupScene');
       }, {
         bgColor: 0x34495e,
         hoverColor: 0x4b6584,
@@ -1194,7 +1107,7 @@ class HammerCustomiseScene extends Phaser.Scene {
         depth: 3
       });
       pickerButton.btnData.optionKey = option.key;
-      pickerButton.btnData.label.y = 48;
+      pickerButton.btnData.label.y = 62;
 
       const preview = this.add.image(0, 0, option.key);
       preview.setDisplaySize(130, 130); //hammer sizes display on customise screen
@@ -1203,9 +1116,9 @@ class HammerCustomiseScene extends Phaser.Scene {
     });
     updateSelection();
 
-    createPixelButton(this, 600, 685, 240, 52, 'BACK TO MENU', () => {
-      this.scene.start('MenuScene');
-    }, { bgColor: 0x555555, hoverColor: 0x777777, borderColor: 0x222222, fontSize: '17px', depth: 3 });
+    createPixelButton(this, UI_RIGHT, 520, UI_BTN_W, UI_BTN_H, '⬅ BACK', () => {
+      this.scene.start('SetupScene');
+    }, { bgColor: 0x555555, hoverColor: 0x777777, borderColor: 0x222222, fontSize: '19px', depth: 3 });
 
     this.input.on('pointerdown', () => {
       triggerWhackAnimation(this, this.cursor);
@@ -1249,11 +1162,16 @@ class LevelSelectScene extends Phaser.Scene {
 
     // Header
     const sceneData = this.sys.settings.data || {};
-    this.page = Number(sceneData.page) || 0;
+    const progress = getGameProgress();
+    const unlockedLevel = progress.unlockedLevel || 1;
+    const totalPages = Math.ceil(LEVEL_CONFIGS.length / LEVELS_PER_PAGE);
+    this.page = sceneData.page !== undefined
+      ? Number(sceneData.page)
+      : Math.floor((Math.min(unlockedLevel, LEVEL_CONFIGS.length) - 1) / LEVELS_PER_PAGE); // Open on the newest level
 
     const headerBox = this.add.container(600, 75).setDepth(2);    const headerBg = this.add.rectangle(0, 0, 440, 56, 0x1e272e, 0.95);
     headerBg.setStrokeStyle(4, 0xf1c40f, 1);
-    const headerTxt = this.add.text(0, 0, `SELECT LEVEL (${this.page + 1}/${Math.ceil(LEVEL_CONFIGS.length / 3)})`, {
+    const headerTxt = this.add.text(0, 0, `SELECT LEVEL (${this.page + 1}/${totalPages})`, {
       fontFamily: PIXEL_FONT,
       fontSize: '32px',
       fontStyle: 'bold',
@@ -1263,18 +1181,14 @@ class LevelSelectScene extends Phaser.Scene {
     }).setOrigin(0.5);
     headerBox.add([headerBg, headerTxt]);
 
-    const progress = getGameProgress();
-    const unlockedLevel = progress.unlockedLevel || 1;
-
-    // 3 levels per page: left, right, bottom-centre. The middle of the screen stays empty.
-    const cardW = 300;
+    // 2 levels per page on the top row, page and back buttons below: the same 2x2 grid as every menu
+    const cardW = 340;
     const cardH = 190;
     const slots = [
-      { x: 200, y: 330 },
-      { x: 1000, y: 330 },
-      { x: 600, y: 610 }
+      { x: UI_LEFT, y: 260 },
+      { x: UI_RIGHT, y: 260 }
     ];
-    const pageLevels = LEVEL_CONFIGS.slice(this.page * 3, this.page * 3 + 3);
+    const pageLevels = LEVEL_CONFIGS.slice(this.page * LEVELS_PER_PAGE, this.page * LEVELS_PER_PAGE + LEVELS_PER_PAGE);
 
     pageLevels.forEach((cfg, slotIdx) => {
       const idx = LEVEL_CONFIGS.indexOf(cfg);
@@ -1366,6 +1280,7 @@ class LevelSelectScene extends Phaser.Scene {
           bgColor: 0x1b281b,
           hoverColor: 0x27ae60,
           isDisabled: false,
+          createdAt: performance.now(),
           dwellTime: 0,
           isHovered: false,
           onClick: () => {
@@ -1393,25 +1308,22 @@ class LevelSelectScene extends Phaser.Scene {
       }
     });
 
-    // Page switch button (bottom-right corner)
-    const totalPages = Math.ceil(LEVEL_CONFIGS.length / 3);
-    if (totalPages > 1) {
-      const nextPage = (this.page + 1) % totalPages;
-      const nextStart = nextPage * 3 + 1;
-      const nextEnd = Math.min(LEVEL_CONFIGS.length, nextStart + 2);
-      const pageLabel = nextPage > this.page
-        ? `LEVELS ${nextStart}-${nextEnd} ▶`
-        : `◀ LEVELS ${nextStart}-${nextEnd}`;
+    // Page switch button
+    const nextPage = (this.page + 1) % totalPages;
+    const nextStart = nextPage * LEVELS_PER_PAGE + 1;
+    const nextEnd = Math.min(LEVEL_CONFIGS.length, nextStart + LEVELS_PER_PAGE - 1);
+    const pageLabel = nextPage > this.page
+      ? `LEVELS ${nextStart}-${nextEnd} ▶`
+      : `◀ LEVELS ${nextStart}-${nextEnd}`;
 
-      createPixelButton(this, 1030, 740, 280, 56, pageLabel, () => {
-        this.scene.restart({ page: nextPage });
-      }, { bgColor: 0x2980b9, hoverColor: 0x3498db, borderColor: 0x1a5276, fontSize: '18px' });
-    }
+    createPixelButton(this, UI_RIGHT, 530, UI_BTN_W, UI_BTN_H, pageLabel, () => {
+      this.scene.restart({ page: nextPage });
+    }, { bgColor: 0x2980b9, hoverColor: 0x3498db, borderColor: 0x1a5276, fontSize: '20px' });
 
     // Back to Menu Button
-    createPixelButton(this, 170, 740, 260, 56, '⬅ MAIN MENU', () => {
+    createPixelButton(this, UI_LEFT, 530, UI_BTN_W, UI_BTN_H, '⬅ MAIN MENU', () => {
       this.scene.start('MenuScene');
-    }, { bgColor: 0x555555, hoverColor: 0x777777, borderColor: 0x222222, fontSize: '18px' });
+    }, { bgColor: 0x555555, hoverColor: 0x777777, borderColor: 0x222222, fontSize: '20px' });
 
     this.input.on('pointerdown', () => {
       triggerWhackAnimation(this, this.cursor);
@@ -1440,149 +1352,101 @@ class LevelSelectScene extends Phaser.Scene {
 }
 
 // ----------------------------------------------------
-// Gameplay Scene (Levels & Endless Modes)
+// Setup Scene
 // ----------------------------------------------------
-class CalibrationScene extends Phaser.Scene {
+class SetupScene extends Phaser.Scene {
   constructor() {
-    super('CalibrationScene');
+    super('SetupScene');
   }
 
   create() {
     this.registeredButtons = [];
-    this.calibrated = false;
     playMusic(this, 'menu-music');
     renderBackground(this);
     this.cursor = createCustomCursor(this);
     this.add.rectangle(600, 400, 1200, 800, 0x000000, 0.6).setDepth(1);
 
-    this.add.text(600, 45, 'CALIBRATION & SETUP', {
-      fontFamily: PIXEL_FONT,
-      fontSize: '36px',
-      fontStyle: 'bold',
-      color: '#f1c40f',
-      stroke: '#000000',
-      strokeThickness: 5
+    this.add.text(600, 45, 'SETUP', {
+      fontFamily: PIXEL_FONT, fontSize: '36px', fontStyle: 'bold',
+      color: '#f1c40f', stroke: '#000000', strokeThickness: 5
     }).setOrigin(0.5).setDepth(3);
 
-    // Info panel (centre of the screen, corners left free for the circles)
-        // ---------- helpers ----------
-    const makeCard = (x, y, w, h, border) => {
-      this.add.rectangle(x + 5, y + 5, w, h, 0x000000, 0.6).setDepth(2);
-      const bg = this.add.rectangle(x, y, w, h, 0x16213e, 0.95).setDepth(2);
-      bg.setStrokeStyle(4, border, 1);
-    };
-    const makeBadge = (x, y, n, color) => {
-      const c = this.add.circle(x, y, 20, color).setDepth(3);
-      c.setStrokeStyle(3, 0x000000, 1);
-      this.add.text(x, y, n, {
-        fontFamily: PIXEL_FONT, fontSize: '22px', fontStyle: 'bold',
-        color: '#ffffff', stroke: '#000000', strokeThickness: 3
-      }).setOrigin(0.5).setDepth(4);
-    };
-    const makeHeading = (x, y, text) => {
-      this.add.text(x, y, text, {
-        fontFamily: PIXEL_FONT, fontSize: '22px', fontStyle: 'bold',
-        color: '#f1c40f', stroke: '#000000', strokeThickness: 4
-      }).setOrigin(0, 0.5).setDepth(3);
-    };
-    const smallLabel = {
-      fontFamily: PIXEL_FONT, fontSize: '13px', fontStyle: 'bold',
-      color: '#95a5a6', stroke: '#000000', strokeThickness: 2, align: 'center'
-    };
-    const valueStyle = {
-      fontFamily: PIXEL_FONT, fontSize: '15px', fontStyle: 'bold',
-      color: '#ffffff', stroke: '#000000', strokeThickness: 2, align: 'center', lineSpacing: 4
-    };
-
-    // ---------- CARD 1: WIFI ----------
-    makeCard(600, 190, 700, 160, 0x3498db);
-    makeBadge(285, 140, '1', 0x3498db);
-    makeHeading(318, 140, 'CONNECT TO THE TRACKER WIFI');
+    // ---------- WIFI ----------
+    const card = this.add.rectangle(600, 165, 900, 150, 0x16213e, 0.95).setDepth(2);
+    card.setStrokeStyle(4, 0x3498db, 1);
 
     const pills = [
-      { x: 435, label: 'NETWORK', value: 'esp32 device' },
-      { x: 765, label: 'PASSWORD', value: 'password123' }
+      { x: 370, label: 'WIFI NETWORK', value: 'ESP32-Ultrasonic-Lab' },
+      { x: 830, label: 'PASSWORD', value: 'password123' }
     ];
     pills.forEach(p => {
-      const pill = this.add.rectangle(p.x, 190, 300, 56, 0x0b1020, 1).setDepth(3);
+      const pill = this.add.rectangle(p.x, 140, 400, 66, 0x0b1020, 1).setDepth(3);
       pill.setStrokeStyle(2, 0x3498db, 1);
-      this.add.text(p.x, 176, p.label, smallLabel).setOrigin(0.5).setDepth(4);
-      this.add.text(p.x, 200, p.value, {
-        fontFamily: PIXEL_FONT, fontSize: '22px', fontStyle: 'bold',
+      this.add.text(p.x, 122, p.label, {
+        fontFamily: PIXEL_FONT, fontSize: '13px', fontStyle: 'bold',
+        color: '#95a5a6', stroke: '#000000', strokeThickness: 2
+      }).setOrigin(0.5).setDepth(4);
+      this.add.text(p.x, 150, p.value, {
+        fontFamily: PIXEL_FONT, fontSize: '24px', fontStyle: 'bold',
         color: '#7bed9f', stroke: '#000000', strokeThickness: 3
       }).setOrigin(0.5).setDepth(4);
     });
 
-    this.statusText = this.add.text(600, 248, '', {
-      fontFamily: PIXEL_FONT, fontSize: '16px', fontStyle: 'bold',
-      color: '#e74c3c', stroke: '#000000', strokeThickness: 3
+    this.statusText = this.add.text(600, 208, '', {
+      fontFamily: PIXEL_FONT, fontSize: '17px', fontStyle: 'bold',
+      stroke: '#000000', strokeThickness: 3
     }).setOrigin(0.5).setDepth(4);
 
-    // ---------- CARD 2: PLACEMENT ----------
-    makeCard(600, 420, 700, 190, 0xe67e22);
-    makeBadge(285, 345, '2', 0xe67e22);
-    makeHeading(318, 345, 'PLACEMENT & PLAY SPACE');
+    // ---------- BUTTONS ----------
+    createPixelButton(this, UI_LEFT, UI_TOP, UI_BTN_W, UI_BTN_H, '📐 CALIBRATE', () => {
+      this.scene.start('CalibrationScene');
+    }, { bgColor: 0x16a085, hoverColor: 0x1abc9c, borderColor: 0x0b5345, fontSize: '22px' });
 
-    const tiles = [
-      { x: 360, icon: '📏', label: 'SENSOR HEIGHT', value: 'At least 90 cm\noff the ground' },
-      { x: 520, icon: '🧍', label: 'ONE PLAYER', value: 'Stand between\nboth sensors' },
-      { x: 680, icon: '📍', label: 'DISTANCE', value: 'About 20 cm\nfrom sensors' },
-      { x: 840, icon: '🚫', label: 'KEEP CLEAR', value: 'No bystanders\n+ objects nearby' }
-    ];
-    tiles.forEach(t => {
+    createPixelButton(this, UI_RIGHT, UI_TOP, UI_BTN_W, UI_BTN_H, 'CUSTOMISE HAMMER', () => {
+      this.scene.start('HammerCustomiseScene');
+    }, { bgColor: 0x8e44ad, hoverColor: 0x9b59b6, borderColor: 0x5b2c6f, fontSize: '19px' });
 
-    const tile = this.add.rectangle(t.x, 430, 150, 120, 0x0b1020, 1).setDepth(3);
-      tile.setStrokeStyle(2, 0xe67e22, 1);
-      this.add.text(t.x, 392, t.icon, { fontSize: '28px' }).setOrigin(0.5).setDepth(4);
-      this.add.text(t.x, 418, t.label, smallLabel).setOrigin(0.5).setDepth(4);
-      this.add.text(t.x, 450, t.value, valueStyle).setOrigin(0.5).setDepth(4);
-    });
+    // Mode Toggle Button (ESP Tracker vs Mouse)
+    const modeBtn = createPixelButton(this, UI_LEFT, UI_BOTTOM, UI_BTN_W, UI_BTN_H, window.espTracker.getModeLabel(), () => {
+      confirmModeSwitch(this, () => window.espTracker.toggleMode());
+    }, { bgColor: 0x2980b9, hoverColor: 0x3498db, borderColor: 0x1a5276, fontSize: '17px' });
 
-    // ---------- CARD 3: CALIBRATE ----------
-    makeCard(600, 590, 700, 140, 0x2ecc71);
-    makeBadge(285, 545, '3', 0x2ecc71);
-    makeHeading(318, 545, 'CALIBRATE');
-    this.add.text(600, 578, 'Reach all 4 corner circles with your hammer', {
-      fontFamily: PIXEL_FONT, fontSize: '15px', fontStyle: 'bold',
-      color: '#bdc3c7', stroke: '#000000', strokeThickness: 2
+    createPixelButton(this, UI_RIGHT, UI_BOTTOM, UI_BTN_W, UI_BTN_H, '⬅ MAIN MENU', () => {
+      this.scene.start('MenuScene');
+    }, { bgColor: 0x555555, hoverColor: 0x777777, borderColor: 0x222222, fontSize: '20px' });
+
+    // ---------- PRESENTER KEYS ----------
+    this.detailText = this.add.text(600, 455, '', {
+      fontFamily: PIXEL_FONT, fontSize: '17px', fontStyle: 'bold', align: 'center', lineSpacing: 10,
+      color: '#ffffff', stroke: '#000000', strokeThickness: 3
     }).setOrigin(0.5).setDepth(3);
 
-    this.progressText = this.add.text(600, 622, 'CIRCLES TOUCHED: 0 / 4', {
-      fontFamily: PIXEL_FONT, fontSize: '26px', fontStyle: 'bold',
-      color: '#ffffff', stroke: '#000000', strokeThickness: 4
-    }).setOrigin(0.5).setDepth(4);
-
-    // Four corner circles
-    const spots = [
-      { x: 100, y: 130 }, { x: 1100, y: 130 },
-      { x: 100, y: 700 }, { x: 1100, y: 700 }
-    ];
-    this.circles = spots.map(pos => {
-      const ring = this.add.circle(pos.x, pos.y, 70, 0xc0392b, 0.35).setDepth(3);
-      ring.setStrokeStyle(6, 0xe74c3c, 1);
-      const label = this.add.text(pos.x, pos.y, 'TOUCH', {
-        fontFamily: PIXEL_FONT, fontSize: '18px', fontStyle: 'bold',
-        color: '#ffffff', stroke: '#000000', strokeThickness: 3
-      }).setOrigin(0.5).setDepth(4);
-      return { ring, label, x: pos.x, y: pos.y, r: 70, hold: 0, done: false };
+    this.input.keyboard.on('keydown-M', () => {
+      window.espTracker.setMirrorY(!window.espTracker.mirrorY);
+    });
+    this.input.keyboard.on('keydown-U', () => {
+      const progress = getGameProgress();
+      progress.unlockedLevel = LEVEL_CONFIGS.length;
+      saveGameProgress(progress);
     });
 
-    // Buttons (bottom-centre)
-    createPixelButton(this, 430, 735, 250, 50, '⬅ MAIN MENU', () => {
-      this.scene.start('MenuScene');
-    }, { bgColor: 0x555555, hoverColor: 0x777777, borderColor: 0x222222, fontSize: '17px', depth: 5 });
-
-    this.doneBtn = createPixelButton(this, 770, 735, 250, 50, 'DONE ✔', () => {
-      this.scene.start('MenuScene');
-    }, { bgColor: 0x27ae60, hoverColor: 0x2ecc71, borderColor: 0x145a32, fontSize: '17px', depth: 5 });
-    this.doneBtn.setVisible(false);
+    this.add.text(600, 690, 'SENSORS AT LEAST 90 CM HIGH  |  ONE PLAYER  |  NO BYSTANDERS OR OBJECTS IN THE AREA', {
+      fontFamily: PIXEL_FONT, fontSize: '16px', fontStyle: 'bold',
+      color: '#bdc3c7', stroke: '#000000', strokeThickness: 3
+    }).setOrigin(0.5).setDepth(3);
 
     this.input.on('pointerdown', () => {
       triggerWhackAnimation(this, this.cursor);
     });
 
-    this.events.once('shutdown', () => {
-      if (window.espTracker) window.espTracker.clearTargets();
+    this.modeChangeCb = () => modeBtn.btnData.label.setText(window.espTracker.getModeLabel());
+    this.mirrorChangeCb = () => syncSceneTargets(this);
+    window.espTracker.on('modeChange', this.modeChangeCb);
+    window.espTracker.on('mirrorChange', this.mirrorChangeCb);
+    this.events.on('shutdown', () => {
+      window.espTracker.off('modeChange', this.modeChangeCb);
+      window.espTracker.off('mirrorChange', this.mirrorChangeCb);
+      window.espTracker.clearTargets();
     });
     syncSceneTargets(this);
   }
@@ -1594,60 +1458,237 @@ class CalibrationScene extends Phaser.Scene {
     updateCustomCursor(this.input.activePointer, this.cursor, this);
     processSceneButtonDwell(this, delta);
 
-    // WiFi / tracker status
-    const t = window.espTracker;
-    if (t && t.mode === 'mouse') {
-      this.statusText.setText('🖱️ MOUSE MODE - wifi not needed');
-      this.statusText.setColor('#f1c40f');
-    } else if (t && t.isConnected) {
-      this.statusText.setText('🟢 TRACKER CONNECTED');
-      this.statusText.setColor('#2ecc71');
-    } else {
-      this.statusText.setText('🔴 NOT CONNECTED - join the wifi above, then wait a few seconds');
-      this.statusText.setColor('#e74c3c');
-    }
+    const tracker = window.espTracker;
+    const status = getTrackerStatus();
+    this.statusText.setText(status.text);
+    this.statusText.setColor(status.color);
+    const levelsLabel = getGameProgress().unlockedLevel >= LEVEL_CONFIGS.length ? 'ALL LEVELS UNLOCKED' : 'U: UNLOCK ALL LEVELS';
+    this.detailText.setText(
+      `PLAY SPACE: ${tracker.calibration ? 'CALIBRATED' : 'DEFAULT'}   |   STAY ${Math.round(tracker.deadZoneOffsetY)} CM FROM THE SENSORS\n`
+      + `M: MIRROR Y ${tracker.mirrorY ? 'ON' : 'OFF'}   |   ${levelsLabel}`
+    );
+  }
+}
 
-    // Corner circles: red -> yellow while touching -> green once touched
-    const cx = this.cursor.shadow.x;
-    const cy = this.cursor.shadow.y;
-    let touched = 0;
+// ----------------------------------------------------
+// Calibration Scene
+// ----------------------------------------------------
+// The player stands on 4 tape marks in turn. Each mark's measured position is pinned to a
+// corner of espTracker.calibrationRect, so wherever the marks are, every hole and button is
+// reachable from inside them. This corrects offset and reach; it cannot reduce sensor noise.
+const CALIBRATION_MARKS = [
+  { key: 'fl', label: 'NEAR LEFT', corner: ['left', 'top'] },
+  { key: 'fr', label: 'NEAR RIGHT', corner: ['right', 'top'] },
+  { key: 'br', label: 'FAR RIGHT', corner: ['right', 'bottom'] },
+  { key: 'bl', label: 'FAR LEFT', corner: ['left', 'bottom'] }
+];
+const CALIBRATION_WALK_MS = 5000;
+const CALIBRATION_HOLD_MS = 3000;
+const CALIBRATION_MIN_SAMPLES = 20; // At 20Hz, at least a second of the hold must have tracked
 
-    this.circles.forEach(c => {
-      if (!c.done) {
-        const inside = Phaser.Math.Distance.Between(cx, cy, c.x, c.y) < c.r;
-        if (inside) {
-          c.hold += delta;
-          c.ring.setFillStyle(0xf1c40f, 0.45);
-          c.ring.setStrokeStyle(6, 0xf1c40f, 1);
-          if (c.hold >= 400) {
-            c.done = true;
-            c.ring.setFillStyle(0x2ecc71, 0.55);
-            c.ring.setStrokeStyle(6, 0x2ecc71, 1);
-            c.label.setText('✔');
-            c.label.setFontSize('36px');
-          }
-        } else {
-          c.hold = 0;
-          c.ring.setFillStyle(0xc0392b, 0.35);
-          c.ring.setStrokeStyle(6, 0xe74c3c, 1);
-        }
-      }
-      if (c.done) touched++;
+function median(values) {
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.floor(sorted.length / 2)];
+}
+
+class CalibrationScene extends Phaser.Scene {
+  constructor() {
+    super('CalibrationScene');
+  }
+
+  create() {
+    this.registeredButtons = [];
+    this.phase = 'menu'; // menu -> walk -> hold (for each mark) -> menu
+    playMusic(this, 'menu-music');
+    renderBackground(this);
+    this.cursor = createCustomCursor(this);
+    this.add.rectangle(600, 400, 1200, 800, 0x000000, 0.6).setDepth(1);
+
+    this.add.text(600, 45, 'CALIBRATE PLAY SPACE', {
+      fontFamily: PIXEL_FONT, fontSize: '36px', fontStyle: 'bold',
+      color: '#f1c40f', stroke: '#000000', strokeThickness: 5
+    }).setOrigin(0.5).setDepth(3);
+
+    this.introText = this.add.text(600, 175, [
+      'Tape 4 marks on the floor: the corners of the space you want to play in.',
+      'Keep them behind the dead zone, about 1 m apart or more.',
+      '',
+      'You stand on each mark for a few seconds. Afterwards every mole',
+      'and button can be reached from inside your marks.'
+    ].join('\n'), {
+      fontFamily: PIXEL_FONT, fontSize: '18px', fontStyle: 'bold', align: 'center', lineSpacing: 6,
+      color: '#ffffff', stroke: '#000000', strokeThickness: 3
+    }).setOrigin(0.5).setDepth(3);
+
+    this.messageText = this.add.text(600, 455, '', {
+      fontFamily: PIXEL_FONT, fontSize: '20px', fontStyle: 'bold', align: 'center', lineSpacing: 8,
+      color: '#ffffff', stroke: '#000000', strokeThickness: 4
+    }).setOrigin(0.5).setDepth(3);
+
+    this.promptText = this.add.text(600, 370, '', {
+      fontFamily: PIXEL_FONT, fontSize: '44px', fontStyle: 'bold', align: 'center', lineSpacing: 14,
+      color: '#ffffff', stroke: '#000000', strokeThickness: 6
+    }).setOrigin(0.5).setDepth(3);
+
+    const rect = window.espTracker.calibrationRect;
+    this.markRings = CALIBRATION_MARKS.map(mark => {
+      const ring = this.add.circle(rect[mark.corner[0]], rect[mark.corner[1]], 60, 0xc0392b, 0.35).setDepth(3);
+      ring.setStrokeStyle(6, 0xe74c3c, 1);
+      ring.setVisible(false);
+      return ring;
     });
 
-    if (!this.calibrated) {
-      this.progressText.setText(`CIRCLES TOUCHED: ${touched} / 4`);
-      if (touched === 4) {
-        this.calibrated = true;
-        this.progressText.setText('CALIBRATED! ✔');
-        this.progressText.setColor('#2ecc71');
-        this.doneBtn.setVisible(true);
-        if (window.espTracker) window.espTracker.playWhackSound();
+    this.startBtn = createPixelButton(this, UI_LEFT, UI_TOP, UI_BTN_W, UI_BTN_H, '▶ START', () => {
+      this.startCalibration();
+    }, { bgColor: 0x27ae60, hoverColor: 0x2ecc71, borderColor: 0x145a32, fontSize: '22px' });
+
+    this.defaultBtn = createPixelButton(this, UI_RIGHT, UI_TOP, UI_BTN_W, UI_BTN_H, '↺ USE DEFAULT', () => {
+      window.espTracker.clearCalibration();
+      this.showMessage('BACK TO THE DEFAULT PLAY SPACE', '#f1c40f');
+    }, { bgColor: 0xd35400, hoverColor: 0xe67e22, borderColor: 0x7e3100, fontSize: '22px' });
+
+    this.backBtn = createPixelButton(this, UI_RIGHT, UI_BOTTOM, UI_BTN_W, UI_BTN_H, '⬅ BACK', () => {
+      this.scene.start('SetupScene');
+    }, { bgColor: 0x555555, hoverColor: 0x777777, borderColor: 0x222222, fontSize: '20px' });
+
+    this.input.keyboard.on('keydown-ESC', () => this.showMenu());
+    this.input.on('pointerdown', () => {
+      triggerWhackAnimation(this, this.cursor);
+    });
+
+    // Samples come straight from telemetry so they are unaffected by the cursor smoothing
+    this.positionCb = ({ raw }) => {
+      if (this.phase === 'hold' && raw.isDetected) {
+        this.samples.push(window.espTracker.getEffectiveNorm(raw.normX, raw.normY));
       }
+    };
+    window.espTracker.on('position', this.positionCb);
+    this.events.once('shutdown', () => {
+      window.espTracker.off('position', this.positionCb);
+      window.espTracker.clearTargets();
+    });
+    syncSceneTargets(this);
+  }
+
+  setMenuVisible(visible) {
+    [this.startBtn, this.defaultBtn, this.backBtn].forEach(btn => btn.setVisible(visible));
+    this.introText.setVisible(visible);
+    this.messageText.setVisible(visible);
+    this.promptText.setVisible(!visible);
+    this.markRings.forEach(ring => ring.setVisible(!visible));
+    syncSceneTargets(this); // No targets while measuring: the aim assist would bend the readings
+  }
+
+  showMenu() {
+    this.phase = 'menu';
+    this.setMenuVisible(true);
+  }
+
+  showMessage(text, color) {
+    this.messageText.setText(text);
+    this.messageText.setColor(color);
+  }
+
+  startCalibration() {
+    const tracker = window.espTracker;
+    if (tracker.mode !== 'esp' || !tracker.isConnected) {
+      this.showMessage('NEEDS BODY TRACKING AND A CONNECTED TRACKER - SEE SETUP', '#e74c3c');
+      return;
+    }
+    this.marks = {};
+    this.markIndex = 0;
+    this.setMenuVisible(false);
+    this.markRings.forEach(ring => {
+      ring.setFillStyle(0xc0392b, 0.35);
+      ring.setStrokeStyle(6, 0xe74c3c, 1);
+    });
+    this.startWalk();
+  }
+
+  startWalk() {
+    this.phase = 'walk';
+    this.phaseTime = CALIBRATION_WALK_MS;
+    const ring = this.markRings[this.markIndex];
+    ring.setFillStyle(0xf1c40f, 0.45);
+    ring.setStrokeStyle(6, 0xf1c40f, 1);
+  }
+
+  finishHold() {
+    if (this.samples.length < CALIBRATION_MIN_SAMPLES) {
+      this.promptNote = 'LOST YOU - TRY THAT MARK AGAIN\n';
+      this.startWalk();
+      return;
+    }
+
+    this.promptNote = '';
+    const mark = CALIBRATION_MARKS[this.markIndex];
+    this.marks[mark.key] = {
+      x: median(this.samples.map(sample => sample.x)),
+      y: median(this.samples.map(sample => sample.y))
+    };
+    window.espTracker.playWhackSound();
+    const ring = this.markRings[this.markIndex];
+    ring.setFillStyle(0x2ecc71, 0.55);
+    ring.setStrokeStyle(6, 0x2ecc71, 1);
+
+    this.markIndex++;
+    if (this.markIndex < CALIBRATION_MARKS.length) {
+      this.startWalk();
+    } else {
+      this.finishCalibration();
+    }
+  }
+
+  finishCalibration() {
+    const tracker = window.espTracker;
+    const result = tracker.setCalibration(this.marks);
+    this.showMenu();
+    if (!result.ok) {
+      this.showMessage(`${result.error}\nNOTHING SAVED - CHECK THE MARKS AND TRY AGAIN`, '#e74c3c');
+      return;
+    }
+
+    const scale = tracker.getCalibrationScale();
+    const twitchy = Math.max(scale.x, scale.y) > 2;
+    this.showMessage(
+      `CALIBRATED ✔  MOVEMENT SCALE ${scale.x.toFixed(1)}x ACROSS, ${scale.y.toFixed(1)}x DEEP\n`
+      + (twitchy ? 'MARKS ARE CLOSE TOGETHER: THE CURSOR WILL FEEL TWITCHY' : 'NOW CHECK YOU CAN REACH THE BUTTONS'),
+      twitchy ? '#f1c40f' : '#2ecc71'
+    );
+    tracker.playWhackSound();
+  }
+
+  update(time, delta) {
+    if (window.espTracker) {
+      window.espTracker.update(delta);
+    }
+    updateCustomCursor(this.input.activePointer, this.cursor, this);
+    processSceneButtonDwell(this, delta);
+
+    if (this.phase === 'menu') return;
+
+    this.phaseTime -= delta;
+    const label = CALIBRATION_MARKS[this.markIndex].label;
+    const seconds = Math.ceil(this.phaseTime / 1000);
+    const note = this.promptNote || '';
+
+    if (this.phase === 'walk') {
+      this.promptText.setText(`${note}WALK TO ${label}\n${seconds}`);
+      if (this.phaseTime <= 0) {
+        this.phase = 'hold';
+        this.phaseTime = CALIBRATION_HOLD_MS;
+        this.samples = [];
+      }
+    } else {
+      this.promptText.setText(`${label}\nHOLD STILL  ${seconds}`);
+      if (this.phaseTime <= 0) this.finishHold();
     }
   }
 }
 
+// ----------------------------------------------------
+// Gameplay Scene (Levels & Endless Modes)
+// ----------------------------------------------------
 class GameScene extends Phaser.Scene {
   constructor() {
     super('GameScene');
@@ -1761,29 +1802,6 @@ class GameScene extends Phaser.Scene {
     // Setup Uncluttered Pixel-styled HUD
     this.setupHUD();
 
-    // Skip to next level button
-    this.skipLevelButton = createPixelButton(
-      this,
-      600,
-      755,
-      300,
-      45,
-      '✦ NEXT LEVEL ✦',
-      () => {
-        this.skipToNextLevel();
-      },
-      {
-        bgColor: 0x27ae60,
-        hoverColor: 0x2ecc71,
-        borderColor: 0x145a32,
-        fontSize: '17px',
-        depth: 25
-      }
-    );
-
-    // Hidden until the target score is reached
-    this.skipLevelButton.setVisible(false);
-
     // Level 60s Countdown Timer
     if (this.gameMode === 'level') {
       this.levelTimerEvent = this.time.addEvent({
@@ -1820,14 +1838,6 @@ class GameScene extends Phaser.Scene {
       }
     });
 
-    // Start mole spawning after 1 second
-    this.time.delayedCall(1500, () => {
-      this.activateRandomMole();
-      if (this.isLevelFive()) {
-        this.scheduleLevelFiveMoleSpawn();
-      }
-    });
-
     if (this.gameMode !== 'level' || this.levelConfig.level >= 2) {
       // A rabbit appears independently every 10 seconds from Level 2 onward.
       this.rabbitTimerEvent = this.time.addEvent({
@@ -1848,8 +1858,13 @@ class GameScene extends Phaser.Scene {
       });
     }
 
-    // Synchronize GameScene targets (mole holes & HUD pause button) to ESP32 / Simulator
+    // Synchronize GameScene targets (active moles) to ESP32 / Simulator
     syncSceneTargets(this);
+
+    // Hold the round on a 3-2-1 count-in; it starts mole spawning when it finishes
+    this.isDeadZonePaused = true;
+    if (this.levelTimerEvent) this.levelTimerEvent.paused = true;
+    this.triggerDeadZoneResumeCountdown();
 
     this.mirrorChangeCb = () => syncSceneTargets(this);
     if (window.espTracker) {
@@ -1878,9 +1893,9 @@ class GameScene extends Phaser.Scene {
     // Dead-Zone Safety Check & State Machine
     // ----------------------------------------------------
     if (window.espTracker && window.espTracker.mode === 'esp') {
-      const isDeadZone = window.espTracker.inDeadZone;
+      const isDeadZone = this.isPlayerOutOfPlay();
 
-      if (isDeadZone && !this.isDeadZonePaused && !this.gameOver && !this.gameComplete) {
+      if (isDeadZone && !this.isDeadZonePaused && !this.isPaused && !this.gameOver && !this.gameComplete) {
         this.triggerDeadZonePause();
       } else if (!isDeadZone && this.isDeadZonePaused && !this.isCountingDown) {
         this.triggerDeadZoneResumeCountdown();
@@ -1944,6 +1959,10 @@ class GameScene extends Phaser.Scene {
     }
   }
 
+  isPlayerOutOfPlay() {
+    return window.espTracker.inDeadZone || window.espTracker.playerLost;
+  }
+
   drawDwellRing(x, y, progress) {
     this.dwellGraphics.clear();
     if (progress <= 0) return;
@@ -1990,7 +2009,8 @@ class GameScene extends Phaser.Scene {
     const bannerBg = this.add.rectangle(0, 0, 860, 160, 0x111111, 0.95);
     bannerBg.setStrokeStyle(5, 0xe74c3c, 1);
 
-    const iconTxt = this.add.text(0, -45, '⚠️ STAND BACK! ⚠️', {
+    const playerLost = !window.espTracker.inDeadZone;
+    const iconTxt = this.add.text(0, -45, playerLost ? '⚠️ PLAYER LOST ⚠️' : '⚠️ STAND BACK! ⚠️', {
       fontFamily: PIXEL_FONT,
       fontSize: '26px',
       fontStyle: 'bold',
@@ -1999,7 +2019,7 @@ class GameScene extends Phaser.Scene {
       strokeThickness: 5
     }).setOrigin(0.5);
 
-    const subTxt = this.add.text(0, 25, 'PLEASE STEP BACK INTO THE PLAY AREA TO RESUME', {
+    const subTxt = this.add.text(0, 25, playerLost ? 'STAND IN THE PLAY AREA TO CONTINUE' : 'PLEASE STEP BACK INTO THE PLAY AREA TO RESUME', {
       fontFamily: PIXEL_FONT,
       fontSize: '22px',
       fontStyle: 'bold',
@@ -2066,13 +2086,14 @@ class GameScene extends Phaser.Scene {
       repeat: 3,
       callback: () => {
         // If player stepped back into dead zone during count-in, cancel and re-trigger warning
-        if (window.espTracker && window.espTracker.inDeadZone) {
+        if (window.espTracker && this.isPlayerOutOfPlay()) {
           countdownEvent.remove();
           if (this.countInModalContainer) {
             this.countInModalContainer.destroy();
             this.countInModalContainer = null;
           }
           this.isCountingDown = false;
+          this.isDeadZonePaused = false;
           this.triggerDeadZonePause();
           return;
         }
@@ -2087,7 +2108,7 @@ class GameScene extends Phaser.Scene {
           numberTxt.setScale(1.4);
           this.tweens.add({ targets: numberTxt, scale: 1.0, duration: 250 });
         } else if (step === 0) {
-          readyTxt.setText('RESUMING!');
+          readyTxt.setText('HERE THEY COME!');
           numberTxt.setText('GO!');
           numberTxt.setColor('#f1c40f');
           numberTxt.setScale(1.5);
@@ -2117,6 +2138,7 @@ class GameScene extends Phaser.Scene {
               this.time.delayedCall(spawnDelay, () => this.activateRandomMole());
             }
           }
+          this.checkLevelCleared();
         }
       }
     });
@@ -2234,7 +2256,8 @@ class GameScene extends Phaser.Scene {
       hudContainer.add([this.modeTitleLabel, this.scoreText, this.targetText, this.livesText]);
     }
 
-    // Integrated ESC / Pause Button badge in top right
+    // Integrated ESC / Pause Button badge in top right. Mouse or keyboard only: the presenter
+    // pauses from the laptop, and a dwell button here would catch players mid-game.
     const pauseBadge = this.add.container(1110, 36).setDepth(25);
     const pauseBg = this.add.rectangle(0, 0, 90, 34, 0x333333);
     pauseBg.setStrokeStyle(3, 0x555555, 1);
@@ -2250,23 +2273,6 @@ class GameScene extends Phaser.Scene {
     pauseBg.on('pointerover', () => pauseBg.setFillStyle(0x555555));
     pauseBg.on('pointerout', () => pauseBg.setFillStyle(0x333333));
     pauseBg.on('pointerup', () => this.togglePause());
-
-    // Register pause badge for dwell interaction
-    this.registeredButtons.push({
-      container: pauseBadge,
-      bg: pauseBg,
-      dwellFill: { setVisible: () => { }, width: 0 },
-      x: 1110,
-      y: 36,
-      width: 90,
-      height: 34,
-      bgColor: 0x333333,
-      hoverColor: 0x555555,
-      isDisabled: false,
-      dwellTime: 0,
-      isHovered: false,
-      onClick: () => this.togglePause()
-    });
   }
 
   updateHUD() {
@@ -2281,11 +2287,6 @@ class GameScene extends Phaser.Scene {
 
       if (this.score >= this.levelConfig.targetScore) {
         this.scoreText.setColor('#2ecc71');
-
-        // Show skip button once target is reached
-        if (this.skipLevelButton && this.levelIndex + 1 < LEVEL_CONFIGS.length) {
-          this.skipLevelButton.setVisible(true);
-        }
       }
 
       this.timerText.setText(`TIME: ${this.levelTimeLeft}s`);
@@ -2369,7 +2370,7 @@ class GameScene extends Phaser.Scene {
       color: '#f1c40f'
     });
 
-    const centreHint = this.add.text(0, 0, 'MOVE TO A CORNER\nAND HOLD TO SELECT', {
+    const centreHint = this.add.text(0, 0, 'HOLD ON A\nBUTTON TO\nSELECT', {
       fontFamily: PIXEL_FONT,
       fontSize: '20px',
       fontStyle: 'bold',
@@ -2385,33 +2386,25 @@ class GameScene extends Phaser.Scene {
       }
     };
 
-    const modeBtn = createPixelButton(this, 230, 640, 320, 56, window.espTracker.getModeLabel(), () => {
+    const modeBtn = createPixelButton(this, UI_LEFT, UI_BOTTOM, UI_BTN_W, UI_BTN_H, window.espTracker.getModeLabel(), () => {
         confirmModeSwitch(this, () => {
         window.espTracker.toggleMode();
         updatePauseModeBtn();
       });
     }, { bgColor: 0x2980b9, hoverColor: 0x3498db, borderColor: 0x1a5276, fontSize: '15px', depth: 65 });
 
-    // Mirror Y Toggle Button
-    const mirrorText = window.espTracker && window.espTracker.mirrorY ? 'MIRROR Y: ON 🪞' : 'MIRROR Y: OFF';
-    const mirrorBtn = createPixelButton(this, 970, 640, 320, 56, mirrorText, () => {
-      const nextMirror = !(window.espTracker.mirrorY);
-      window.espTracker.setMirrorY(nextMirror);
-      mirrorBtn.btnData.label.setText(nextMirror ? 'MIRROR Y: ON 🪞' : 'MIRROR Y: OFF');
-    }, { bgColor: 0x8e44ad, hoverColor: 0x9b59b6, borderColor: 0x5b2c6f, fontSize: '15px', depth: 65 });
-
     // Resume Button
-    const resumeBtn = createPixelButton(this, 230, 340, 320, 70, 'RESUME GAME ▶', () => {
+    const resumeBtn = createPixelButton(this, UI_LEFT, UI_TOP, UI_BTN_W, UI_BTN_H, 'RESUME GAME ▶', () => {
       this.resumeGame();
     }, { bgColor: 0x27ae60, hoverColor: 0x2ecc71, borderColor: 0x145a32, depth: 65 });
 
     // Restart Button
-    const restartBtn = createPixelButton(this, 970, 340, 320, 70, 'RESTART LEVEL ↺', () => {
+    const restartBtn = createPixelButton(this, UI_RIGHT, UI_TOP, UI_BTN_W, UI_BTN_H, 'RESTART LEVEL ↺', () => {
       this.scene.start('GameScene', { mode: this.gameMode, levelIndex: this.levelIndex });
     }, { bgColor: 0xd35400, hoverColor: 0xe67e22, borderColor: 0x7e3100, depth: 65 });
 
     // Exit to Menu Button
-    const exitBtn = createPixelButton(this, 600, 720, 320, 50, this.gameMode === 'level' ? 'LEVEL SELECT ☰' : 'MAIN MENU ☰', () => {
+    const exitBtn = createPixelButton(this, UI_RIGHT, UI_BOTTOM, UI_BTN_W, UI_BTN_H, this.gameMode === 'level' ? 'LEVEL SELECT ☰' : 'MAIN MENU ☰', () => {
       if (this.gameMode === 'level') {
         this.scene.start('LevelSelectScene');
       } else {
@@ -2420,7 +2413,7 @@ class GameScene extends Phaser.Scene {
 
     }, { bgColor: 0x7f8c8d, hoverColor: 0x95a5a6, borderColor: 0x333333, depth: 65 });
 
-    this.pauseModalContainer.buttons = [modeBtn, mirrorBtn, resumeBtn, restartBtn, exitBtn];
+    this.pauseModalContainer.buttons = [modeBtn, resumeBtn, restartBtn, exitBtn];
 
     // Synchronize pause menu button targets to ESP32 / Simulator
     syncSceneTargets(this);
@@ -2458,15 +2451,16 @@ class GameScene extends Phaser.Scene {
       this.pauseModalContainer = null;
     }
 
-    // Restore gameplay targets (mole holes & HUD pause button) to ESP32 / Simulator
+    // Restore gameplay targets (active moles) to ESP32 / Simulator
     syncSceneTargets(this);
+    this.checkLevelCleared();
   }
 
   getMoleDuration() {
     if (this.gameMode === 'level') {
       return this.levelConfig.moleTime;
     }
-    return Math.max(900, 3200 - this.score * 7.5);
+    return Math.max(2000, 3200 - this.score * 7.5); // Floor leaves time to walk between holes
   }
 
   getMoleSpawnDelay() {
@@ -2837,10 +2831,13 @@ class GameScene extends Phaser.Scene {
             onComplete: () => {
               this.rabbit.setVisible(false);
               this.rabbit.setAngle(0);
-              this.score += 20; // score ++ 3 if rabbit is not whacked
               this.activeRabbit = false;
               this.rabbitHoleIndex = -1;
               syncSceneTargets(this);
+              if (this.gameOver || this.gameComplete) return;
+              this.score += 20; // score ++ 3 if rabbit is not whacked
+              this.updateHUD();
+              this.checkLevelCleared();
             }
           });
         });
@@ -2952,6 +2949,7 @@ class GameScene extends Phaser.Scene {
     if (this.activeRabbit) {
       const rabbitDist = Phaser.Math.Distance.Between(strikeX, strikeY, this.rabbit.x, this.rabbit.y);
        if (rabbitDist < getHitRadius(true)) {
+        this.tweens.killTweensOf(this.rabbit);
         this.rabbit.setTexture('crying-rabbit');
         this.activeRabbit = false;
         this.rabbitHoleIndex = -1;
@@ -3003,26 +3001,44 @@ class GameScene extends Phaser.Scene {
       });
 
       this.deactivateMole(mole, true);
+      this.checkLevelCleared();
     }
   }
 
   handleRabbitWhacked() {
-    //this.missedMoles++;
+    this.missedMoles++;
     this.updateHUD();
-    this.canWhack = false;
 
-    if (this.rabbitTimerEvent) this.rabbitTimerEvent.remove();
-    if (this.levelTimerEvent) this.levelTimerEvent.remove();
-    if (this.timerTween) this.timerTween.stop();
-    this.timerBar.container.setVisible(false);
+    const popup = this.add.text(this.rabbit.x, this.rabbit.y - 40, '-1 LIFE', {
+      fontFamily: PIXEL_FONT,
+      fontSize: '26px',
+      fontStyle: 'bold',
+      color: '#e74c3c',
+      stroke: '#000000',
+      strokeThickness: 4
+    }).setOrigin(0.5).setDepth(30);
 
-    this.time.delayedCall(500, () => {
+    this.tweens.add({
+      targets: popup,
+      y: popup.y - 40,
+      alpha: 0,
+      duration: 800,
+      onComplete: () => popup.destroy()
+    });
+
+    this.time.delayedCall(600, () => {
+      this.rabbit.setVisible(false);
+      this.rabbit.setAngle(0);
+      this.rabbit.setTexture('rabbit');
+    });
+
+    if (this.missedMoles >= this.maxMissedMoles) {
       if (this.gameMode === 'level') {
         this.handleLevelLostLives('RABBIT WHACKED');
       } else {
         this.handleEndlessGameOver('RABBIT WHACKED');
       }
-    });
+    }
   }
 
   handleLevelLostLives(reason = 'ALL 3 LIVES LOST') {
@@ -3035,9 +3051,9 @@ class GameScene extends Phaser.Scene {
 
     const overlay = this.add.rectangle(600, 400, 1200, 800, 0x000000, 0.75).setDepth(50);
     const panel = this.add.container(600, 400).setDepth(51);
-    const panelBg = this.add.rectangle(0, 0, 600, 420, 0x1e272e, 0.96);
+    const panelBg = this.add.rectangle(0, 0, 900, 460, 0x1e272e, 0.96);
     panelBg.setStrokeStyle(4, 0xe74c3c, 1);
-    const panelShadow = this.add.rectangle(5, 5, 600, 420, 0x000000, 0.6);
+    const panelShadow = this.add.rectangle(5, 5, 900, 460, 0x000000, 0.6);
 
     const title = this.add.text(0, -140, 'OUT OF LIVES', {
       fontFamily: PIXEL_FONT,
@@ -3068,11 +3084,11 @@ class GameScene extends Phaser.Scene {
     panel.add([panelShadow, panelBg, title, subtitle, stats]);
 
     // Buttons
-    createPixelButton(this, 600 - 130, 400 + 135, 210, 52, 'RESTART LEVEL ↺', () => {
+    createPixelButton(this, UI_LEFT, UI_BOTTOM, UI_BTN_W, UI_BTN_H, 'RESTART LEVEL ↺', () => {
       this.scene.start('GameScene', { mode: 'level', levelIndex: this.levelIndex });
     }, { bgColor: 0x27ae60, hoverColor: 0x2ecc71, borderColor: 0x145a32, fontSize: '17px', depth: 60 });
 
-    createPixelButton(this, 600 + 130, 400 + 135, 180, 52, 'LEVEL SELECT ☰', () => {
+    createPixelButton(this, UI_RIGHT, UI_BOTTOM, UI_BTN_W, UI_BTN_H, 'LEVEL SELECT ☰', () => {
       this.scene.start('LevelSelectScene');
     }, { bgColor: 0x7f8c8d, hoverColor: 0x95a5a6, borderColor: 0x333333, fontSize: '17px', depth: 60 });
 
@@ -3080,70 +3096,39 @@ class GameScene extends Phaser.Scene {
     syncSceneTargets(this);
   }
 
-  skipToNextLevel() {
-    // Only allow skipping after reaching the target
+  // Reaching the target ends the level there and then, so a later miss can't turn a win into a loss
+  checkLevelCleared() {
     if (
       this.gameMode !== 'level' ||
       this.score < this.levelConfig.targetScore ||
-      this.levelIndex + 1 >= LEVEL_CONFIGS.length
+      this.gameOver ||
+      this.gameComplete ||
+      this.isPaused ||
+      this.isDeadZonePaused
     ) {
       return;
     }
 
+    this.finishLevel(true);
+  }
+
+  handleLevelTimeUp() {
+    this.finishLevel(false);
+  }
+
+  finishLevel(passed) {
     this.gameComplete = true;
     this.canWhack = false;
-
-    // Stop the current level
     if (this.timerTween) this.timerTween.stop();
     if (this.levelTimerEvent) this.levelTimerEvent.remove(false);
     this.stopLevelFiveMoleTimers();
     this.timerBar.container.setVisible(false);
 
-    // Save progress for the completed level
-    const currentLevel = this.levelConfig.level;
-    const progress = getGameProgress();
-
-    const star1 = true;
-    const star2 = this.score > this.levelConfig.targetScore;
-    const star3 = this.missedMoles === 0;
-
-    const totalStars =
-      (star1 ? 1 : 0) +
-      (star2 ? 1 : 0) +
-      (star3 ? 1 : 0);
-
-    if (currentLevel >= progress.unlockedLevel) {
-      progress.unlockedLevel = currentLevel + 1;
-    }
-
-    const existingStars = progress.levelStars[currentLevel] || 0;
-    progress.levelStars[currentLevel] = Math.max(existingStars, totalStars);
-
-    const existingHigh = progress.levelHighScores[currentLevel] || 0;
-    progress.levelHighScores[currentLevel] = Math.max(existingHigh, this.score);
-
-    saveGameProgress(progress);
-
-    // Start the next level immediately
-    this.scene.start('GameScene', {
-      mode: 'level',
-      levelIndex: this.levelIndex + 1
-    });
-  }
-  handleLevelTimeUp() {
-    this.gameComplete = true;
-    this.canWhack = false;
-    if (this.timerTween) this.timerTween.stop();
-    this.stopLevelFiveMoleTimers();
-    this.timerBar.container.setVisible(false);
-
-    const target = this.levelConfig.targetScore;
-    const passed = this.score >= target;
     const progress = getGameProgress();
 
     // 3 Stars evaluation
     let star1 = passed;
-    let star2 = this.score > target;
+    let star2 = passed && this.levelTimeLeft >= 20;
     let star3 = passed && (this.missedMoles === 0);
     let totalStars = (star1 ? 1 : 0) + (star2 ? 1 : 0) + (star3 ? 1 : 0);
 
@@ -3167,12 +3152,14 @@ class GameScene extends Phaser.Scene {
     const overlay = this.add.rectangle(600, 400, 1200, 800, 0x000000, 0.75).setDepth(50);
 
     const panel = this.add.container(600, 380).setDepth(51);
-    const panelBg = this.add.rectangle(0, 0, 650, 500, 0x1e272e, 0.96);
+    const panelBg = this.add.rectangle(0, 0, 900, 500, 0x1e272e, 0.96);
     panelBg.setStrokeStyle(4, passed ? 0x2ecc71 : 0xe74c3c, 1);
-    const panelShadow = this.add.rectangle(5, 5, 650, 500, 0x000000, 0.6);
+    const panelShadow = this.add.rectangle(5, 5, 900, 500, 0x000000, 0.6);
     panel.add([panelShadow, panelBg]);
 
-    const titleStr = passed ? 'LEVEL COMPLETE!' : 'TIME UP - LEVEL FAILED';
+    const hasNextLevel = passed && (this.levelIndex + 1 < LEVEL_CONFIGS.length);
+    const allComplete = passed && !hasNextLevel;
+    const titleStr = allComplete ? 'YOU BEAT ALL 6 LEVELS!' : passed ? 'LEVEL COMPLETE!' : 'TIME UP - LEVEL FAILED';
     const titleColor = passed ? '#2ecc71' : '#e74c3c';
     const resultTitle = this.add.text(0, -200, titleStr, {
       fontFamily: PIXEL_FONT,
@@ -3187,7 +3174,7 @@ class GameScene extends Phaser.Scene {
     if (passed) {
       const starDescs = [
         'Complete Level',
-        'Exceed Target',
+        '20 Seconds To Spare',
         'Perfect Accuracy'
       ];
       const starEarnedList = [star1, star2, star3];
@@ -3267,29 +3254,37 @@ class GameScene extends Phaser.Scene {
     }
 
     // Action Buttons
-    const hasNextLevel = passed && (this.levelIndex + 1 < LEVEL_CONFIGS.length);
-    const btnY = 175;
+    createPixelButton(this, UI_LEFT, UI_BOTTOM, UI_BTN_W, UI_BTN_H, 'RETRY ↺', () => {
+      this.scene.start('GameScene', { mode: 'level', levelIndex: this.levelIndex });
+    }, { bgColor: 0x2980b9, hoverColor: 0x3498db, borderColor: 0x1a5276, fontSize: '19px', depth: 60 });
 
+    createPixelButton(this, UI_RIGHT, UI_BOTTOM, UI_BTN_W, UI_BTN_H, 'LEVELS ☰', () => {
+      this.scene.start('LevelSelectScene');
+    }, { bgColor: 0x7f8c8d, hoverColor: 0x95a5a6, borderColor: 0x333333, fontSize: '19px', depth: 60 });
+
+    // Next level starts by itself, so nobody has to walk to a button after every win
     if (hasNextLevel) {
-      createPixelButton(this, 600 + 180, 380 + btnY, 180, 52, '✦ NEXT LEVEL ✦ ', () => {
-        this.scene.start('GameScene', { mode: 'level', levelIndex: this.levelIndex + 1 });
-      }, { bgColor: 0x27ae60, hoverColor: 0x2ecc71, borderColor: 0x145a32, fontSize: '17px', depth: 60 });
+      let secondsLeft = 5;
+      const nextText = this.add.text(600, 495, `NEXT LEVEL IN ${secondsLeft}`, {
+        fontFamily: PIXEL_FONT,
+        fontSize: '22px',
+        fontStyle: 'bold',
+        color: '#f1c40f',
+        stroke: '#000000',
+        strokeThickness: 3
+      }).setOrigin(0.5).setDepth(60);
 
-      createPixelButton(this, 600, 380 + btnY, 140, 52, 'RETRY ↺', () => {
-        this.scene.start('GameScene', { mode: 'level', levelIndex: this.levelIndex });
-      }, { bgColor: 0x2980b9, hoverColor: 0x3498db, borderColor: 0x1a5276, fontSize: '17px', depth: 60 });
-
-      createPixelButton(this, 600 - 180, 380 + btnY, 160, 52, 'LEVELS ☰', () => {
-        this.scene.start('LevelSelectScene');
-      }, { bgColor: 0x7f8c8d, hoverColor: 0x95a5a6, borderColor: 0x333333, fontSize: '17px', depth: 60 });
-    } else {
-      createPixelButton(this, 600 + 120, 380 + btnY, 180, 52, 'RETRY ↺', () => {
-        this.scene.start('GameScene', { mode: 'level', levelIndex: this.levelIndex });
-      }, { bgColor: 0x27ae60, hoverColor: 0x2ecc71, borderColor: 0x145a32, fontSize: '17px', depth: 60 });
-
-      createPixelButton(this, 600 - 120, 380 + btnY, 180, 52, 'LEVELS ☰', () => {
-        this.scene.start('LevelSelectScene');
-      }, { bgColor: 0x7f8c8d, hoverColor: 0x95a5a6, borderColor: 0x333333, fontSize: '17px', depth: 60 });
+      this.time.addEvent({
+        delay: 1000,
+        repeat: secondsLeft - 1,
+        callback: () => {
+          secondsLeft--;
+          nextText.setText(`NEXT LEVEL IN ${secondsLeft}`);
+          if (secondsLeft === 0) {
+            this.scene.start('GameScene', { mode: 'level', levelIndex: this.levelIndex + 1 });
+          }
+        }
+      });
     }
 
     // Update targets to Level Complete / Victory buttons
@@ -3311,9 +3306,9 @@ class GameScene extends Phaser.Scene {
 
     const overlay = this.add.rectangle(600, 400, 1200, 800, 0x000000, 0.75).setDepth(50);
     const panel = this.add.container(600, 400).setDepth(51);
-    const panelBg = this.add.rectangle(0, 0, 550, 400, 0x1e272e, 0.96);
+    const panelBg = this.add.rectangle(0, 0, 900, 460, 0x1e272e, 0.96);
     panelBg.setStrokeStyle(4, 0xe74c3c, 1);
-    const panelShadow = this.add.rectangle(5, 5, 550, 400, 0x000000, 0.6);
+    const panelShadow = this.add.rectangle(5, 5, 900, 460, 0x000000, 0.6);
     panel.add([panelShadow, panelBg]);
 
     const title = this.add.text(0, -130, 'GAME OVER', {
@@ -3346,11 +3341,11 @@ class GameScene extends Phaser.Scene {
     panel.add([title, scoreTxt, highTxt]);
 
     // Buttons
-    createPixelButton(this, 600 - 120, 400 + 110, 190, 55, 'PLAY AGAIN ↺', () => {
+    createPixelButton(this, UI_LEFT, UI_BOTTOM, UI_BTN_W, UI_BTN_H, 'PLAY AGAIN ↺', () => {
       this.scene.start('GameScene', { mode: 'endless' });
     }, { bgColor: 0x27ae60, hoverColor: 0x2ecc71, borderColor: 0x145a32, fontSize: '17px', depth: 60 });
 
-    createPixelButton(this, 600 + 120, 400 + 110, 190, 55, 'MAIN MENU ☰', () => {
+    createPixelButton(this, UI_RIGHT, UI_BOTTOM, UI_BTN_W, UI_BTN_H, 'MAIN MENU ☰', () => {
       this.scene.start('MenuScene');
     }, { bgColor: 0x7f8c8d, hoverColor: 0x95a5a6, borderColor: 0x333333, fontSize: '17px', depth: 60 });
 
@@ -3384,6 +3379,7 @@ const config = {
     InstructionsScene,
     HammerCustomiseScene,
     LevelSelectScene,
+    SetupScene,
     CalibrationScene,
     GameScene
   ]

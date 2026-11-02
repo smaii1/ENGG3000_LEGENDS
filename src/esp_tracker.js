@@ -3,6 +3,10 @@
  * Handles WebSocket streaming from ESP32
  */
 
+const CALIBRATION_KEY = 'esp_tracker_calibration';
+const DEFAULT_SCREEN_MAP = { ax: 1152, bx: 24, ay: 720, by: 40 }; // 2-98% of width, 5-95% of height
+const CALIBRATION_MIN_SPAN = 0.25; // Marks closer than this (normalised) would amplify noise too far
+
 class ESPTrackerService {
   constructor() {
     const savedHost = localStorage.getItem('esp_tracker_host');
@@ -12,6 +16,7 @@ class ESPTrackerService {
     this.ws = null;
     this.isConnected = false;
     this.isConnecting = false;
+    this.hasConnected = false;
     this.reconnectTimer = null;
     this.mode = localStorage.getItem('esp_tracker_mode') || 'esp'; // 'esp' | 'mouse'
     this.mirrorY = localStorage.getItem('esp_tracker_mirror_y') === 'true'; // configurable mirror
@@ -19,6 +24,11 @@ class ESPTrackerService {
     // Screen dimensions
     this.screenWidth = 1200;
     this.screenHeight = 800;
+
+    // Calibration marks land on this screen rectangle: every button is inside it, and every
+    // mole, including those at the edges of the artwork, is within strike range of it
+    this.calibrationRect = { left: 160, right: 1020, top: 170, bottom: 650 };
+    this.calibration = this.loadCalibration();
 
     // Dynamic targets cache for ESP32 Aim-Assist (holes & UI buttons)
     this.currentTargets = [];
@@ -50,6 +60,8 @@ class ESPTrackerService {
     this.maxYCm = 200.0; // Back boundary of play area (60cm offset + 140cm play depth)
     this.lastTrackingTime = Date.now();
     this.trackingLost = false;
+    this.playerLost = false; // Debounced: tracker dropped out, or no player seen for 1.5s
+    this.lostSince = 0;
 
     // Callbacks & event listeners
     this.listeners = {
@@ -91,6 +103,7 @@ class ESPTrackerService {
 
       this.ws.onopen = () => {
         this.isConnected = true;
+        this.hasConnected = true;
         this.isConnecting = false;
         console.log(`[ESPTracker] Connected to ESP32 at ${url}`);
         this.emit('connection', { status: 'CONNECTED', host: this.host, port: this.port });
@@ -183,36 +196,32 @@ class ESPTrackerService {
   setMirrorY(mirror) {
     this.mirrorY = Boolean(mirror);
     localStorage.setItem('esp_tracker_mirror_y', this.mirrorY);
+    this.clearCalibration(); // A saved calibration only holds for the mirror setting it was measured with
     this.emit('mirrorChange', { mirrorY: this.mirrorY });
 
     // Re-evaluate target coordinates with updated mirror setting
-    if (this.lastScreenTargets && this.lastScreenTargets.length > 0) {
-      this.sendTargets(this.lastScreenTargets);
-    }
+    this.resendTargets();
   }
 
   // ----------------------------------------------------
   // Coordinate Mapping: Play Area [0.0, 1.0] <-> Screen (1200x800)
   // ----------------------------------------------------
   normToScreen(normX, normY) {
-    const clampedNormX = Math.max(0.0, Math.min(1.0, normX));
-    const clampedNormY = Math.max(0.0, Math.min(1.0, normY));
+    const norm = this.getEffectiveNorm(normX, normY);
+    const map = this.calibration || DEFAULT_SCREEN_MAP;
 
-    // Mirror Y if requested
-    const effectiveNormY = this.mirrorY ? (1.0 - clampedNormY) : clampedNormY;
-
-    // Map to active screen area (2% to 98% horizontally, 5% to 95% vertically)
-    const screenX = (0.02 + clampedNormX * 0.96) * this.screenWidth;
-    const screenY = (0.05 + effectiveNormY * 0.90) * this.screenHeight;
-
-    return { x: screenX, y: screenY };
+    return {
+      x: Math.max(0, Math.min(this.screenWidth, map.ax * norm.x + map.bx)),
+      y: Math.max(0, Math.min(this.screenHeight, map.ay * norm.y + map.by))
+    };
   }
 
   screenToNorm(screenX, screenY) {
-    const normX = ((screenX / this.screenWidth) - 0.02) / 0.96;
+    const map = this.calibration || DEFAULT_SCREEN_MAP;
+    const normX = (screenX - map.bx) / map.ax;
 
     // Invert the vertical mapping, then undo the optional mirror.
-    let effectiveNormY = ((screenY / this.screenHeight) - 0.05) / 0.90;
+    let effectiveNormY = (screenY - map.by) / map.ay;
     effectiveNormY = Math.max(0.0, Math.min(1.0, effectiveNormY));
     const normY = this.mirrorY ? (1.0 - effectiveNormY) : effectiveNormY;
 
@@ -220,6 +229,66 @@ class ESPTrackerService {
       x: parseFloat(Math.max(0.0, Math.min(1.0, normX)).toFixed(4)),
       y: parseFloat(Math.max(0.0, Math.min(1.0, normY)).toFixed(4))
     };
+  }
+
+  getEffectiveNorm(normX, normY) {
+    const x = Math.max(0.0, Math.min(1.0, normX));
+    const y = Math.max(0.0, Math.min(1.0, normY));
+    return { x, y: this.mirrorY ? (1.0 - y) : y };
+  }
+
+  // ----------------------------------------------------
+  // Play-Space Calibration
+  // ----------------------------------------------------
+  loadCalibration() {
+    try {
+      const map = JSON.parse(localStorage.getItem(CALIBRATION_KEY));
+      if (map && [map.ax, map.bx, map.ay, map.by].every(Number.isFinite)) return map;
+    } catch (err) {
+      console.warn('[ESPTracker] Ignoring unreadable calibration:', err);
+    }
+    return null;
+  }
+
+  // marks: { fl, fr, bl, br }, each an effective norm position measured at that tape mark
+  setCalibration(marks) {
+    const left = (marks.fl.x + marks.bl.x) / 2;
+    const right = (marks.fr.x + marks.br.x) / 2;
+    const front = (marks.fl.y + marks.fr.y) / 2;
+    const back = (marks.bl.y + marks.br.y) / 2;
+
+    if (right - left < CALIBRATION_MIN_SPAN) {
+      return { ok: false, error: right < left ? 'LEFT AND RIGHT LOOK SWAPPED' : 'LEFT AND RIGHT MARKS TOO CLOSE' };
+    }
+    if (back - front < CALIBRATION_MIN_SPAN) {
+      return { ok: false, error: back < front ? 'FRONT AND BACK LOOK SWAPPED' : 'FRONT AND BACK MARKS TOO CLOSE' };
+    }
+
+    const rect = this.calibrationRect;
+    const ax = (rect.right - rect.left) / (right - left);
+    const ay = (rect.bottom - rect.top) / (back - front);
+    this.calibration = { ax, bx: rect.left - ax * left, ay, by: rect.top - ay * front };
+    localStorage.setItem(CALIBRATION_KEY, JSON.stringify(this.calibration));
+    this.resendTargets();
+    return { ok: true };
+  }
+
+  // How much further the cursor moves per cm than it does uncalibrated. Sensor noise grows by the same factor.
+  getCalibrationScale() {
+    const map = this.calibration || DEFAULT_SCREEN_MAP;
+    return { x: map.ax / DEFAULT_SCREEN_MAP.ax, y: map.ay / DEFAULT_SCREEN_MAP.ay };
+  }
+
+  clearCalibration() {
+    this.calibration = null;
+    localStorage.removeItem(CALIBRATION_KEY);
+    this.resendTargets();
+  }
+
+  resendTargets() {
+    if (this.lastScreenTargets && this.lastScreenTargets.length > 0) {
+      this.sendTargets(this.lastScreenTargets);
+    }
   }
 
   // ----------------------------------------------------
@@ -313,7 +382,7 @@ class ESPTrackerService {
         // Offset proximity calculation:
         // Ultrasonics are mounted behind the red line. Any detected player with y < deadZone is across the line.
         const isOffsetDeadZone = this.raw.isDetected && (this.raw.yCm < this.deadZoneOffsetY);
-        this.raw.inDeadZone = Boolean(data.dz) || isOffsetDeadZone;
+        this.raw.inDeadZone = this.mode === 'esp' && (Boolean(data.dz) || isOffsetDeadZone);
         this.raw.secOnline = Boolean(data.so);
         this.raw.distLO = data.lo || 0;
         this.raw.distLI = data.li || 0;
@@ -398,6 +467,16 @@ class ESPTrackerService {
         }
       }
     }
+
+    // Only once connected, so the mouse fallback keeps working when the tracker is switched off
+    const isLost = this.mode === 'esp' && this.hasConnected
+      && (!this.isConnected || this.trackingLost || !this.raw.isDetected);
+    if (!isLost) {
+      this.lostSince = 0;
+    } else if (!this.lostSince) {
+      this.lostSince = Date.now();
+    }
+    this.playerLost = isLost && Date.now() - this.lostSince > 1500;
   }
 
   // ----------------------------------------------------
